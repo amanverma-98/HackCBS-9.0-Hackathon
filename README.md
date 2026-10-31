@@ -3,8 +3,14 @@
 <!-- ───────────────────────────────────────────────── -->
 
 <p align="center">
+  <a href="https://hackcbs.tech/#about">
+    <img src="./docs/images/hackcbs-logo.png" alt="hackCBS 9.0" width="130">
+  </a>
+</p>
+
+<p align="center">
   <img src="https://img.shields.io/badge/HackCBS-9.0-ff6b35?style=for-the-badge&labelColor=1a1a2e" alt="HackCBS 9.0">
-  <img src="https://img.shields.io/badge/October–November-2026-4cc9f0?style=for-the-badge&labelColor=1a1a2e" alt="Oct-Nov 2026">
+  <img src="https://img.shields.io/badge/31%20October–1%20November-2026-4cc9f0?style=for-the-badge&labelColor=1a1a2e" alt="31 Oct- 1 Nov 2026">
   <img src="https://img.shields.io/badge/India's%20Largest-Student%20Hackathon-f72585?style=for-the-badge&labelColor=1a1a2e" alt="Student Hackathon">
 </p>
 
@@ -255,8 +261,8 @@ The speech layer is **fully on-device**. No audio, text, or location data leaves
 | 📦 Model management | Checksum-verified downloads, HTTP Range resume, atomic ready markers |
 | 🌏 Languages | Hindi, Tamil, Bengali, Gujarati, Marathi, Kannada, Malayalam, Telugu, Odia, English |
 
-> **Note:** Hindi speech models are absent from the current release. Text and original voice
-> work without speech packs. General model translation supports Hindi ↔ Marathi only.
+> **Note:** Text and original voice communication work without downloading any speech packs.
+> On-device translation currently supports Hindi ↔ Marathi.
 
 ---
 
@@ -265,105 +271,30 @@ The speech layer is **fully on-device**. No audio, text, or location data leaves
 ### 1. Talk2 Mobile App
 
 The mobile app combines onboarding, encrypted direct chat, BLE mesh relay, multilingual
-speech, GPS radar, emergency alerts, and model management in a single offline-first
-experience.
-
-#### 🚀 Onboarding & Setup
+speech, GPS radar, emergency alerts, and model management in a single offline-first experience.
 
 <table>
   <tr>
     <td align="center">
-      <img src="./docs/screenshots/onboarding-welcome.png" alt="Welcome screen" width="240">
-      <br><sub>Welcome screen with language selection</sub>
+      <img src="./docs/screenshots/chat.png" alt="Chat & Voice" width="180">
+      <br><sub><b>Talk</b><br>Encrypted chat & PTT voice</sub>
     </td>
     <td align="center">
-      <img src="./docs/screenshots/onboarding-profile.png" alt="Profile setup" width="240">
-      <br><sub>Name, role, and profile setup</sub>
+      <img src="./docs/screenshots/radar.png" alt="GPS Radar" width="180">
+      <br><sub><b>Radar</b><br>GPS bearing & mesh peers</sub>
     </td>
     <td align="center">
-      <img src="./docs/screenshots/onboarding-permissions.png" alt="Permissions" width="240">
-      <br><sub>Bluetooth and location permissions</sub>
+      <img src="./docs/screenshots/alert.png" alt="Emergency Alert" width="180">
+      <br><sub><b>Alert</b><br>SOS broadcast & presets</sub>
+    </td>
+    <td align="center">
+      <img src="./docs/screenshots/settings.png" alt="Settings & Models" width="180">
+      <br><sub><b>Settings</b><br>Languages & offline models</sub>
     </td>
   </tr>
 </table>
 
-#### 💬 Chat & Voice Communication
-
-<table>
-  <tr>
-    <td align="center">
-      <img src="./docs/screenshots/chat-text.png" alt="Text chat" width="240">
-      <br><sub>Encrypted text messaging</sub>
-    </td>
-    <td align="center">
-      <img src="./docs/screenshots/chat-voice.png" alt="Voice message" width="240">
-      <br><sub>Push-to-talk voice capture</sub>
-    </td>
-    <td align="center">
-      <img src="./docs/screenshots/chat-translation.png" alt="Translation" width="240">
-      <br><sub>Multilingual speech translation</sub>
-    </td>
-  </tr>
-</table>
-
-#### 📡 Radar & Mesh Network
-
-<table>
-  <tr>
-    <td align="center">
-      <img src="./docs/screenshots/radar-compass.png" alt="GPS radar" width="240">
-      <br><sub>GPS compass radar with peer bearing</sub>
-    </td>
-    <td align="center">
-      <img src="./docs/screenshots/mesh-network.png" alt="BLE mesh" width="240">
-      <br><sub>BLE mesh relay and neighbor list</sub>
-    </td>
-    <td align="center">
-      <img src="./docs/screenshots/mesh-voice.png" alt="Mesh voice" width="240">
-      <br><sub>Mesh voice notes broadcast</sub>
-    </td>
-  </tr>
-</table>
-
-#### 🚨 Emergency & Alerts
-
-<table>
-  <tr>
-    <td align="center">
-      <img src="./docs/screenshots/alert-presets.png" alt="Emergency presets" width="240">
-      <br><sub>One-tap emergency alert presets</sub>
-    </td>
-    <td align="center">
-      <img src="./docs/screenshots/alert-sos.png" alt="SOS broadcast" width="240">
-      <br><sub>SOS broadcast with mesh relay</sub>
-    </td>
-    <td align="center">
-      <img src="./docs/screenshots/alert-received.png" alt="Alert received" width="240">
-      <br><sub>Incoming alert with proximity siren</sub>
-    </td>
-  </tr>
-</table>
-
-#### ⚙️ Settings & Models
-
-<table>
-  <tr>
-    <td align="center">
-      <img src="./docs/screenshots/settings-language.png" alt="Language settings" width="240">
-      <br><sub>Independent language settings</sub>
-    </td>
-    <td align="center">
-      <img src="./docs/screenshots/settings-models.png" alt="Model packs" width="240">
-      <br><sub>Speech model pack downloads</sub>
-    </td>
-    <td align="center">
-      <img src="./docs/screenshots/settings-privacy.png" alt="Privacy" width="240">
-      <br><sub>Privacy and appearance controls</sub>
-    </td>
-  </tr>
-</table>
-
-Five tabs organize the workflow:
+Five primary tabs organize the workflow:
 
 | Tab | Purpose |
 | --- | --- |
@@ -527,15 +458,15 @@ See [DEVICE_TESTS.md](docs/DEVICE_TESTS.md) for the complete 20-card acceptance 
 
 ## 📦 Models
 
-**Configured release:** https://github.com/Somu9450/Talk2/releases/tag/model-pack-v1
+Talk2 uses on-device ONNX models for speech recognition, synthesis, and translation.
+The app includes a built-in pinned manifest (`model-host/upstream-manifest.json`) specifying
+the exact filenames, byte sizes, and SHA-256 integrity digests for all 39 model assets.
 
-Leave the model manifest URL blank to use the bundled pinned manifest. The 39 required
-assets match the release's filenames, byte sizes, and SHA-256 digests.
+- **Zero-setup communication:** Text chat, original voice messages (16 kHz PCM), alerts, and mesh relay work immediately **without downloading any model packs**.
+- **Speech pack management:** Download and verify optional language packs directly within the app settings.
+- **Custom hosting:** You can host model assets on your own server or GitHub release by configuring the manifest URL in settings.
 
-> **Note:** Hindi's four speech files are absent from this release. Original voice and
-> text work without any speech pack.
-
-See [MODEL_HOSTING.md](docs/MODEL_HOSTING.md) and [RELEASE_VERIFICATION.md](docs/RELEASE_VERIFICATION.md).
+See [MODEL_HOSTING.md](docs/MODEL_HOSTING.md) for export scripts, model architectures, and hosting instructions.
 
 ---
 
@@ -562,7 +493,7 @@ services (112/108/100) automatically. SOS alerts reach only paired phones and me
 - 🔓 Mesh message bodies are **public** — readable by every relay. Do not send private information.
 - 🔑 Mesh signatures bind a **device key**, not a verified person or organization.
 - 📍 GPS accuracy is approximate and unavailable indoors. The 20 m siren is not a safety detector.
-- 🗣️ Hindi speech models are absent. General translation supports Hindi ↔ Marathi only.
+- 🗣️ General on-device model translation currently supports Hindi ↔ Marathi.
 - 📲 The app must stay in the foreground — no foreground service for background mesh.
 - 🧪 Physical two-phone and three-phone acceptance testing is required before deployment.
 
@@ -577,5 +508,8 @@ reviewed before distribution.
 ---
 
 <p align="center">
-  Built with ❤️ at <a href="https://hackcbs.tech/#about"><strong>HackCBS 9.0</strong></a> — India's Largest Student-run Hackathon
+  <a href="https://hackcbs.tech/#about">
+    <img src="./docs/images/hackcbs-logo.png" alt="hackCBS 9.0" width="60">
+  </a><br>
+  Built with ❤️ at <a href="https://hackcbs.tech/#about"><strong>hackCBS 9.0</strong></a> — India's Largest Student-run Hackathon
 </p>
