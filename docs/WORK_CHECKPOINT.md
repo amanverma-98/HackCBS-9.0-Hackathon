@@ -106,7 +106,9 @@ Direct path. Do not claim relay or hardware validation from this Stage 1 work.
 
 Input checkout: `fa4de0eea50e2640f6339cac0ed9c8491283c538` on `main`, clean before
 Stage 2. `docs/PROJECT_AUDIT.md` is absent; `docs/CURRENT_AUDIT.md` was used and
-updated with the Stage 2 pre-edit state and planned file set.
+updated with the Stage 2 pre-edit state and planned file set. `origin/main` advanced
+to `b42599c020cdc61e7341ec6e975daedd22c79603` during the task; it was merged and
+the Stage 2 changes were retained in merge commit `13857f64bca8574357010b9be99ad5f7922475d5`.
 
 Implemented for Stage 2:
 
@@ -175,11 +177,13 @@ Checks and exact results:
   $env:ANDROID_USER_HOME = Join-Path (Get-Location) 'mobile\.android-stage2';
   & '.\mobile\.gradle-stage2\wrapper\dists\gradle-8.13-bin\5xuhj0ry160q40clulazy9h7d\gradle-8.13\bin\gradle.bat'
   -p mobile\android :app:testDebugUnitTest :app:assembleDebug --console=plain`
-  — BUILD SUCCESSFUL in 9m 20s. Java compile and APK assembly passed. Gradle
-  reports `:app:testDebugUnitTest NO-SOURCE`; standalone Java harnesses provide
-  protocol coverage.- Debug APK: `mobile/android/app/build/outputs/apk/debug/app-debug.apk`, package
-  `com.talk2.dev`, version `1.1.0-dev`, debug-signed, 130,117,058 bytes; SHA-256
-  `F9BA68F18F496570D883B533645EF08D21B13647279B0EBF09EE16A76AF9352A`.
+  — BUILD SUCCESSFUL in 3s on the merged main tree (52 actionable tasks, 3 executed,
+  49 up-to-date). Java compilation and APK assembly were up-to-date and passed.
+  Gradle reports `:app:testDebugUnitTest NO-SOURCE`; standalone Java harnesses provide
+  protocol coverage.
+- Debug APK: `mobile/android/app/build/outputs/apk/debug/app-debug.apk`, package
+  `com.talk2.dev`, version `1.1.0-dev`, debug-signed, 130,117,060 bytes; SHA-256
+  `447CCA11118D7333C413F6A46E6B78FBEABDCEC9058235EB8447439FE057FD94`.
 - No APK was installed on a physical phone. No hardware validation is claimed.
 
 Preserved concurrent workspace change: `mobile/android/gradle/wrapper/
@@ -191,8 +195,9 @@ binary directly. Task-local Gradle caches are ignored by `.gitignore`; active
 VS Code Gradle processes held cache locks, so their contents were left in the
 workspace and are not part of the commit.
 
-Stage 2 implementation commit: recorded after the implementation commit is
-created. Stage 2 checkpoint documentation commit follows it.
+Stage 2 implementation commit: `03f3efd2f88eeb2977ce893af15a4542b5de06b0`.
+Upstream integration merge: `13857f64bca8574357010b9be99ad5f7922475d5`.
+The checkpoint update is committed separately after these implementation commits.
 
 Stage 3 entry point: read this Stage 2 checkpoint and the Stage 3 section plus
 “Copy into VS Code Codex: prompt 3” in Talk2-staged-Codex-plan.md. Extend short
