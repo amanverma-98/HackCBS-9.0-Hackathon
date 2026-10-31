@@ -6,6 +6,14 @@ import {
 } from "react-native";
 export const Native = NativeModules.Talk2Native;
 export const events = new NativeEventEmitter(Native);
+export const Mesh = {
+  start: () => Native.startMesh() as Promise<string>,
+  stop: () => Native.stopMesh(),
+  sendText: (destination: string, text: string) =>
+    Native.sendMeshText(destination, text) as Promise<boolean>,
+  sendSOS: (text: string) => Native.sendMeshSOS(text) as Promise<boolean>,
+  acknowledgeInbox: (id: string) => Native.acknowledgeMeshInbox(id) as Promise<boolean>,
+};
 export async function permissions(kind: "mic" | "radio" | "location") {
   if (Platform.OS !== "android")
     throw new Error("Talk2 device integrations currently target Android");

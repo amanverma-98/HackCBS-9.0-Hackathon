@@ -187,3 +187,9 @@ temp/
 # ============================================================
 
 .github/*.local
+# Temporary local validation caches created outside the normal Gradle locations.
+/.stage2-java-test/
+/mobile/.android-stage2/
+/mobile/.gradle-stage2/
+/mobile/.gradle-stage2-final/
+/mobile/android/.gradle-stage2/

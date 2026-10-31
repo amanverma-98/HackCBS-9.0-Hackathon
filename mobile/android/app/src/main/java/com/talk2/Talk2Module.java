@@ -10,7 +10,7 @@ import android.media.*;
 import org.json.*;
 import java.util.concurrent.*;
 public final class Talk2Module extends ReactContextBaseJavaModule implements SensorEventListener,LocationListener,LifecycleEventListener{
- private final ReactApplicationContext ctx;private final ModelStore models;private final SpeechEngine speech;private final TranslationEngine translator;private PeerRadio radio;
+ private final ReactApplicationContext ctx;private final ModelStore models;private final SpeechEngine speech;private final TranslationEngine translator;private PeerRadio radio;private BleMeshTransport bleMesh;private MeshRouter meshRouter;
  private final ExecutorService jobs=Executors.newSingleThreadExecutor(),downloads=Executors.newSingleThreadExecutor(),network=Executors.newSingleThreadExecutor();
  private final VoiceTransfer voice;private final ProfilePhoto photo;
  private final SensorManager sensors;private final LocationManager locations;private Location lastLocation;private long lastHeading;private boolean observing;
@@ -48,6 +48,12 @@ public final class Talk2Module extends ReactContextBaseJavaModule implements Sen
  @ReactMethod public void join(String transport,String address,Promise p){task(network,p,()->{radio().join(transport,address);return true;});}
  @ReactMethod public void confirmPairing(Promise p){task(network,p,()->{radio().confirm();return true;});}
  @ReactMethod public void send(String text,Promise p){task(network,p,()->{radio().send(text);return true;});}
+ @ReactMethod public void startMesh(Promise p){task(network,p,()->{if(bleMesh!=null)return meshRouter.nodeId();try{MeshRouter.Events ev=(type,data)->emit(type,data);bleMesh=new BleMeshTransport(ctx,new BleMeshTransport.Listener(){public void packet(String id,String wire){try{if(meshRouter!=null)meshRouter.receive(id,wire);}catch(Exception e){try{emit("meshError",new JSONObject().put("message",e.getMessage()));}catch(Exception ignored){}}}public void peer(String id,boolean up){if(meshRouter!=null)meshRouter.neighbor(id,up);}public void error(String message){try{emit("meshError",new JSONObject().put("message",message));}catch(Exception ignored){}}});meshRouter=new MeshRouter(ctx,ev,(neighbor,wire)->bleMesh.send(neighbor,wire));bleMesh.start();meshRouter.replayInbox();return meshRouter.nodeId();}catch(Exception e){stopMeshInternal();throw e;}});}
+ @ReactMethod public void stopMesh(){stopMeshInternal();}
+ private synchronized void stopMeshInternal(){if(bleMesh!=null){bleMesh.stop();bleMesh=null;}if(meshRouter!=null){meshRouter.close();meshRouter=null;}emit("meshStopped",new JSONObject());}
+ @ReactMethod public void sendMeshText(String destination,String text,Promise p){task(network,p,()->{if(meshRouter==null)throw new Exception("Start BLE mesh first");meshRouter.send("text",destination,text);return true;});}
+ @ReactMethod public void sendMeshSOS(String text,Promise p){task(network,p,()->{if(meshRouter==null)throw new Exception("Start BLE mesh first");meshRouter.send("sos","*",text);return true;});}
+ @ReactMethod public void acknowledgeMeshInbox(String id,Promise p){task(network,p,()->{if(meshRouter!=null)meshRouter.acknowledgeInbox(id);return true;});}
  @ReactMethod public void disconnect(Promise p){task(network,p,()->{if(radio!=null){radio.close();radio=null;}return true;});}
  @ReactMethod public void bluetoothDiscoverable(Promise p){try{Intent i=new Intent(BluetoothAdapter.ACTION_REQUEST_DISCOVERABLE);i.putExtra(BluetoothAdapter.EXTRA_DISCOVERABLE_DURATION,120);if(getCurrentActivity()==null)throw new Exception("Open the app first");getCurrentActivity().startActivity(i);p.resolve(true);}catch(Exception e){p.reject("BLUETOOTH",e);}}
  @ReactMethod public void startSensors(Promise p){new Handler(Looper.getMainLooper()).post(()->{try{if(!observing){Sensor s=sensors.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR);if(s!=null)sensors.registerListener(this,s,SensorManager.SENSOR_DELAY_UI);else emit("sensorStatus",new JSONObject().put("message","No compass sensor; north-up radar"));boolean provider=false;for(String name:new String[]{LocationManager.GPS_PROVIDER,LocationManager.NETWORK_PROVIDER})if(locations.isProviderEnabled(name)){locations.requestLocationUpdates(name,2000,0,this);provider=true;}observing=true;if(!provider)emit("sensorStatus",new JSONObject().put("message","Enable Location in Android Settings"));}p.resolve(true);}catch(Exception e){sensors.unregisterListener(this);locations.removeUpdates(this);observing=false;p.reject("SENSORS",e);}});}
@@ -64,7 +70,7 @@ public final class Talk2Module extends ReactContextBaseJavaModule implements Sen
  @Override public void onProviderDisabled(String provider){try{emit("sensorStatus",new JSONObject().put("message","Enable GPS for peer bearings"));}catch(Exception ignored){}}
  @Override public void onStatusChanged(String provider,int status,Bundle extras){}
  @Override public void onHostResume(){}
- @Override public void onHostPause(){stopSensors();jobs.execute(speech::close);}
- @Override public void onHostDestroy(){stopSensors();speech.close();if(radio!=null)radio.close();}
+ @Override public void onHostPause(){stopSensors();jobs.execute(speech::close);stopMeshInternal();}
+ @Override public void onHostDestroy(){stopSensors();speech.close();if(radio!=null)radio.close();if(bleMesh!=null)bleMesh.stop();}
  @Override public void invalidate(){onHostDestroy();photo.close();ctx.removeLifecycleEventListener(this);jobs.shutdownNow();downloads.shutdownNow();network.shutdownNow();super.invalidate();}
 }

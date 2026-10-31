@@ -101,3 +101,102 @@ Stage 2 entry point: reread this checkpoint and the Stage 2 section plus “Copy
 VS Code Codex: prompt 2” in Talk2-staged-Codex-plan.md. Start with bounded BLE
 transport/mesh design while retaining the currently working direct RFCOMM/Wi-Fi
 Direct path. Do not claim relay or hardware validation from this Stage 1 work.
+
+## Stage 2 checkpoint
+
+Input checkout: `fa4de0eea50e2640f6339cac0ed9c8491283c538` on `main`, clean before
+Stage 2. `docs/PROJECT_AUDIT.md` is absent; `docs/CURRENT_AUDIT.md` was used and
+updated with the Stage 2 pre-edit state and planned file set.
+
+Implemented for Stage 2:
+
+- Added separate native BLE advertiser/scanner/GATT client/server transport and
+  bounded three-neighbor management. `PeerRadio.java`, `SecureChannel.java`,
+  direct RFCOMM/Wi-Fi Direct, speech and voice transport were not edited.
+- Added a versioned signed packet envelope (P-256 Android Keystore origin key),
+  text/SOS/custody/receipt types, 8 KiB packet and 1,200-character body bounds,
+  24-hour expiry, four-hop cap, ATT-MTU-aware chunking up to 160 payload bytes,
+  bounded reassembly, duplicate
+  suppression, 16-item AtomicFile queue and bounded seen cache. GATT writes are
+  serialized per link, with write retry/backoff; routed packets retry while
+  pending. Queue is separate from the saved Settings/history JSON.
+- Added Radar opt-in controls for BLE public text and SOS. UI warns that relays can
+  read message bodies. Mesh stops on app pause; no foreground service or
+  locked-screen claim was added.
+- Added `docs/REFERENCE_IMPLEMENTATION_MAP.md` before implementation and updated
+  third-party license notes, architecture, status, README and device test cards.
+- Added focused Java `MeshPacketTest` and `MeshFragmentCodecTest` coverage for
+  signatures, tampering, TTL and size bounds, default/negotiated MTUs, out-of-order
+  assembly, duplicates and malformed frames; wired them into `scripts/test-java.sh`.
+
+Known limits and unresolved acceptance:
+
+- Mesh is an experimental prototype; only physical two-phone and three-phone
+  tests can establish BLE operation and A–B–C relay. No phones were available,
+  so no hardware validation is claimed.
+- Packet bodies are not end-to-end encrypted. Signatures authenticate a
+  key-derived device ID and protect integrity, but do not verify a person's role
+  or organization. Never send private details through BLE mesh text.
+- SOS broadcast lacks signed origin-only cancellation and a full incident state
+  machine. Broadcast SOS has no destination receipt. Peer radar currently has no
+  location sharing over mesh; BLE RSSI is not used for position.
+- ResQMesh's exact immutable source revision could not be verified in this
+  research session. No external code was copied. See REFERENCE_IMPLEMENTATION_MAP.
+- No connected phones were available. Physical device cards 15–16 in
+  DEVICE_TESTS.md remain pending; BLE range, A–B–C relay, reboot custody, retry
+  timing, delivery receipts and OEM/battery behavior are not verified.
+
+Changed files in the Stage 2 implementation commit:
+
+- `.gitignore`, `README.md`, `docs/ARCHITECTURE.md`, `docs/CURRENT_AUDIT.md`,
+  `docs/DEVICE_TESTS.md`, `docs/REFERENCE_IMPLEMENTATION_MAP.md`,
+  `docs/STATUS.md`, `docs/THIRD_PARTY.md`, `docs/WORK_CHECKPOINT.md`
+- `mobile/App.tsx`, `mobile/src/native.ts`,
+  `mobile/android/app/src/main/java/com/talk2/BleMeshTransport.java`,
+  `MeshFragmentCodec.java`, `MeshPacket.java`, `MeshRouter.java`,
+  `Talk2Module.java`, `scripts/test-java.sh`, `shared/i18n.cjs`,
+  `tests/MeshFragmentCodecTest.java`, `tests/MeshPacketTest.java`
+
+Checks and exact results:
+
+- `npm run check` — PASS: 17 Node tests and `tsc --noEmit` mobile typecheck.
+- `git diff --check` — PASS.
+- Standalone Java harnesses (PowerShell equivalent of `scripts/test-java.sh`,
+  `javac -encoding UTF-8`, org.json 20240303): PASS for SecureChannel matching
+  SAS/encryption/replay/reflection/tamper checks; ModelStore installed/tamper/
+  manifest/path checks; VoiceTransfer size/order/hash/path checks; MeshPacket
+  signature/tamper/hop/body/wire bounds; MeshFragmentCodec MTU-23/MTU-185 framing,
+  out-of-order assembly, duplicate and malformed-frame checks. Output lines:
+  `PASS: matching SAS...`, `PASS: uninstalled/verified/tampered/removed...`,
+  `VoiceTransfer: maximum clip...`, `MeshPacketTest PASS`,
+  `MeshFragmentCodecTest PASS`.
+- Android command used the workspace-local Gradle 8.13 distribution directly:
+  `$env:GRADLE_USER_HOME = Join-Path (Get-Location) 'mobile\.gradle-stage2-final';
+  $env:ANDROID_USER_HOME = Join-Path (Get-Location) 'mobile\.android-stage2';
+  & '.\mobile\.gradle-stage2\wrapper\dists\gradle-8.13-bin\5xuhj0ry160q40clulazy9h7d\gradle-8.13\bin\gradle.bat'
+  -p mobile\android :app:testDebugUnitTest :app:assembleDebug --console=plain`
+  — BUILD SUCCESSFUL in 9m 20s. Java compile and APK assembly passed. Gradle
+  reports `:app:testDebugUnitTest NO-SOURCE`; standalone Java harnesses provide
+  protocol coverage.- Debug APK: `mobile/android/app/build/outputs/apk/debug/app-debug.apk`, package
+  `com.talk2.dev`, version `1.1.0-dev`, debug-signed, 130,117,058 bytes; SHA-256
+  `F9BA68F18F496570D883B533645EF08D21B13647279B0EBF09EE16A76AF9352A`.
+- No APK was installed on a physical phone. No hardware validation is claimed.
+
+Preserved concurrent workspace change: `mobile/android/gradle/wrapper/
+gradle-wrapper.properties` changed during this session to Gradle 9.7.1 while
+retaining the previous distribution checksum. It is excluded from the Stage 2
+commit and remains unstaged; the wrapper rejected that download due to the
+checksum mismatch. The Stage 2 build used the already downloaded Gradle 8.13
+binary directly. Task-local Gradle caches are ignored by `.gitignore`; active
+VS Code Gradle processes held cache locks, so their contents were left in the
+workspace and are not part of the commit.
+
+Stage 2 implementation commit: recorded after the implementation commit is
+created. Stage 2 checkpoint documentation commit follows it.
+
+Stage 3 entry point: read this Stage 2 checkpoint and the Stage 3 section plus
+“Copy into VS Code Codex: prompt 3” in Talk2-staged-Codex-plan.md. Extend short
+voice-note transfer over a physically proven mesh, preserve the direct voice path,
+and retain the signed-role verification boundary. Do not start Stage 3 before
+Stage 2 commit and physical mesh evidence or an explicit decision to proceed with
+those tests still pending.

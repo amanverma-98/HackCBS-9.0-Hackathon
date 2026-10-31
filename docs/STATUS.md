@@ -22,6 +22,10 @@
   diagnostics for other offered UI languages.
 - Pack status reports manifest availability, checksum-verified installation,
   complete pack size, received bytes and resumable partial state.
+- Stage 2 adds an isolated native BLE advertiser/scanner/GATT prototype, signed
+  bounded packets, a three-neighbor cap, fragment assembly, duplicate suppression,
+  persistent queue/seen state, custody and directed text receipt events, plus
+  user-started Radar controls for public mesh text and SOS.
 
 ## Verified here
 
@@ -44,8 +48,13 @@ on the actual target phones.
 - Original voice sends the speaker's recording; it is not translated. Translated
   speech sends recognized text and synthesizes it on the receiver. Neither is a
   continuous call.
-- One peer and one transport are active at a time. Bluetooth is Classic RFCOMM.
-  There is no BLE mesh, automatic multipath or background foreground service.
+- Legacy direct mode still has one paired peer and uses Bluetooth Classic RFCOMM
+  or Wi-Fi Direct. BLE mesh is separate, experimental and foreground-only; it
+  stops on app background. It does not use a foreground service.
+- Mesh packet signatures authenticate their key-bound device ID and protect
+  integrity, but the packet body is plaintext to relays. SOS has no origin-signed
+  cancel lifecycle. Three-phone relay, delayed receipts, queue restart, flow
+  control, battery and OEM BLE behavior remain unverified on physical devices.
 - Keep Talk2 open. Profile photos remain local. Marathi UI coverage reports
   untranslated keys with English fallback; other offered UI languages currently
   fall back to English.
