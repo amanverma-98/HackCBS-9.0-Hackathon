@@ -35,12 +35,25 @@ test("localization falls back structurally and reports missing coverage", () => 
   assert.equal(i18n.translate("Talk", "mr"), "बोला");
   assert.equal(i18n.diagnostics("mr").coverage, 1);
   assert.equal(i18n.translate("untranslated-key", "mr"), "untranslated-key");
-  const diagnostic = i18n.diagnostics("hi");
+  const diagnostic = i18n.diagnostics("ta");
   assert.equal(diagnostic.translated, 0);
   assert.equal(diagnostic.missing.length, diagnostic.total);
   assert.ok(diagnostic.coverage < 1);
   assert.match(i18n.coverageText("mr"), /UI भाषांतर व्याप्ती/);
-  assert.match(i18n.coverageText("hi"), /Missing strings fall back to English/);
+  assert.match(i18n.coverageText("ta"), /Missing strings fall back to English/);
+});
+
+test("Hindi and Gujarati UI strings are bundled with full coverage", () => {
+  assert.equal(i18n.diagnostics("hi").coverage, 1);
+  assert.equal(i18n.diagnostics("gu").coverage, 1);
+  assert.equal(i18n.translate("Talk", "hi"), "बात करें");
+  assert.equal(i18n.translate("Talk", "gu"), "વાત કરો");
+});
+
+test("download progress is reported in megabytes", () => {
+  assert.equal(i18n.mb(395000000), "376.7");
+  assert.equal(i18n.packProgressLabel("Hindi", 1048576 * 12.3, 1048576 * 377.3, "en"), "Hindi: 12.3 of 377.3 MB downloaded");
+  assert.doesNotMatch(i18n.packProgressLabel("Hindi", 1, 2, "mr"), /बाइट्स/);
 });
 
 test("pack state distinguishes unavailable, ready, partial, downloading, and failed", () => {

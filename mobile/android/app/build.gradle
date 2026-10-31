@@ -22,6 +22,8 @@ android {
   standalone { initWith release; debuggable false; signingConfig signingConfigs.debug; matchingFallbacks = ['release'] }
  }
  compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
+ // Built-in TTS voices (assets/voices) stay uncompressed so their size can be checked before extraction.
+ androidResources { noCompress 'onnx' }
 }
 dependencies { implementation('com.facebook.react:react-android'); implementation('com.facebook.react:hermes-android'); implementation('com.microsoft.onnxruntime:onnxruntime-android:1.20.0') }
 

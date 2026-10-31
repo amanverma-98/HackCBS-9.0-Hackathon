@@ -21,7 +21,7 @@ function migrateSettings(saved = {}, defaults = {}) {
     sounds: saved.sounds !== false,
     autoPlay: saved.autoPlay !== false,
     reviewSpeech: saved.reviewSpeech === true,
-    voiceMode: saved.voiceMode === "original" ? "original" : "translated",
+    voiceMode: ["original", "translated"].includes(saved.voiceMode) ? saved.voiceMode : (defaults.voiceMode || "translated"),
     messages: Array.isArray(saved.messages) ? saved.messages.filter((message) => message && typeof message === "object" && Number.isFinite(message.time)) : [],
     settingsVersion: SETTINGS_VERSION,
     role: ROLES.includes(saved.role) ? saved.role : "citizen",
