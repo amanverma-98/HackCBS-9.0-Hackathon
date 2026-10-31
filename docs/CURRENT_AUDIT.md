@@ -52,3 +52,11 @@ consumes them in mobile/App.tsx. The provider boundary is
 mobile/src/roleVerification.ts. Focused tests are in tests/stage1.test.cjs;
 documentation is in docs/THIRD_PARTY.md and docs/VERIFICATION_API.md, with
 README/status/device-checkpoint updates.
+
+## Stage 2 pre-edit supplement (2026-10-31)
+
+- The current checked-out source state is `main` at `fa4de0eea50e2640f6339cac0ed9c8491283c538`, clean before Stage 2 edits. `docs/PROJECT_AUDIT.md` is not present; the current audit is this file and the Stage 1 checkpoint is `docs/WORK_CHECKPOINT.md`.
+- `PeerRadio.java` remains a one-session direct Classic RFCOMM/Wi-Fi Direct implementation. Stage 2 work is isolated in new BLE/protocol classes plus the bridge/UI; no changes to `PeerRadio`, `SecureChannel`, `VoiceTransfer`, `SpeechEngine` or `TranslationEngine` were planned.
+- Android manifest already had runtime Bluetooth scan/connect/advertise declarations; no foreground service is being added. The mesh will be opt-in and stop on app background.
+- Planned Stage 2 edits: `mobile/android/app/src/main/java/com/talk2/{BleMeshTransport,MeshFragmentCodec,MeshPacket,MeshRouter}.java`, `Talk2Module.java`, `mobile/src/native.ts`, `mobile/App.tsx`, `tests/{MeshPacketTest,MeshFragmentCodecTest}.java`, `scripts/test-java.sh`, `.gitignore` for task-local cache folders, `docs/REFERENCE_IMPLEMENTATION_MAP.md`, `docs/THIRD_PARTY.md`, `docs/ARCHITECTURE.md`, `docs/STATUS.md`, `docs/DEVICE_TESTS.md`, `README.md`, and this checkpoint.
+- External research map was written before implementation in `docs/REFERENCE_IMPLEMENTATION_MAP.md`. No source reuse. ResQMesh immutable revision could not be retrieved; this is recorded rather than guessed.

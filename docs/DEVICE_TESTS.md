@@ -39,6 +39,20 @@ transport and the exact on-screen error for any failure.
     a download, resume it, confirm installed status follows checksum completion,
     remove it and retry. Hindi speech must show unavailable in this release.
 
+15. BLE two-phone mesh: on both phones grant Bluetooth permissions, open Radar and
+    start BLE mesh. Send a short public text and a generic SOS. Record packet ID,
+    device/API, arrival time, displayed state and logs. Verify the UI warns that
+    relay phones can read the body. Background either app: mesh should stop and
+    the screen should reflect it. Confirm the paired RFCOMM/Wi-Fi Direct path still
+    works independently before and after mesh use.
+16. BLE three-phone relay: place A and C outside mutual BLE range, B between them;
+    confirm A and C cannot discover/connect directly, then send text and SOS A→B→C.
+    Verify C received once despite retransmission, inspect custody vs destination
+    receipt timing, kill/restart A and B with queued traffic, recover a disconnected
+    neighbor, test queue limits, and test TTL/expiry. Record exact topology, phones,
+    Android versions, timestamps, radio/power state and logcat. No emulator result
+    substitutes for this card.
+
 Capture logs with:
 
 ```powershell

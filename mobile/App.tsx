@@ -19,7 +19,7 @@ import {
   View,
   useColorScheme,
 } from "react-native";
-import { Native, events, permissions } from "./src/native";
+import { Native, Mesh, events, permissions } from "./src/native";
 import { DEFAULT_BACKEND_URL, DEFAULT_MANIFEST_URL } from "./src/config";
 import { LANGUAGES, position, prune, validMessage } from "../shared/core.cjs";
 import alertData from "../shared/alerts.json";
@@ -226,6 +226,7 @@ export default function App() {
       | "connected"
       | "failed"
     >("idle");
+  const [peerFilter, setPeerFilter] = useState<"all" | "direct" | "relayed">("all");
   const [packs, setPacks] = useState<Record<string, boolean>>({}),
     packsRef = useRef(packs),
     [packDetails, setPackDetails] = useState<Record<string, any>>({}),
@@ -257,6 +258,10 @@ export default function App() {
     [token, setToken] = useState(""),
     [answer, setAnswer] = useState("");
   const [sirenEnabled, setSirenEnabled] = useState(false);
+  const [meshActive, setMeshActive] = useState(false),
+    [meshNode, setMeshNode] = useState(""),
+    [meshPeers, setMeshPeers] = useState<string[]>([]),
+    [meshText, setMeshText] = useState("");
   const [sensorStatus, setSensorStatus] = useState(
     "Waiting for a location fix",
   );
@@ -461,6 +466,24 @@ export default function App() {
         await play(incoming);
     } else await wire({ id: uid(), kind: "ack", ack: m.id, time: Date.now() });
   }
+  async function receiveMesh(e: any) {
+    if (!e?.id || !e?.body) return;
+    if (!ref.current.messages.some((m) => m.id === e.id && m.direction === "in")) {
+      const incoming: Message = {
+        id: e.id,
+        kind: e.type === "meshSOS" ? "alert" : "text",
+        text: e.body,
+        language: "und",
+        time: Number(e.created) || Date.now(),
+        direction: "in",
+        status: "received",
+        name: "BLE mesh",
+      };
+      await add(incoming);
+      if (e.type === "meshSOS") Alert.alert("Mesh SOS", e.body);
+    }
+    await Mesh.acknowledgeInbox(e.id);
+  }
   async function onFloor(m: any) {
     if (!validMessage(m) || m.kind !== "floor") return;
     if (m.op === "release") {
@@ -524,6 +547,11 @@ export default function App() {
           setRadioStatus(e.message || "Connection failed");
         }
         if (e.type === "voiceError") setError(e.message);
+        if (e.type === "meshNeighbor") setMeshPeers((old) => e.connected ? (old.includes(e.id) ? old : [...old, e.id]) : old.filter((id) => id !== e.id));
+        if (e.type === "meshError") setError(e.message || "BLE mesh error");
+        if (e.type === "meshStopped") { setMeshActive(false); setMeshPeers([]); }
+        if (e.type === "meshMessage" || e.type === "meshSOS") receiveMesh(e).catch((x: any) => setError(x.message));
+        if (e.type === "meshReceipt") setRadioStatus("Mesh destination receipt received");
         if (e.type === "sensorStatus") setSensorStatus(e.message);
         if (e.type === "status") {
           setRadioStatus(e.state);
@@ -1225,7 +1253,7 @@ export default function App() {
           card(
             <>
               {note(
-                `${m.direction === "out" ? "You" : m.name || "Peer"} · ${m.language.toUpperCase()} · ${new Date(m.time).toLocaleTimeString()} · ${m.status}`,
+                `${m.direction === "out" ? "You" : m.name || "Peer"} · ${m.language === "und" ? i18n.translate("Language unknown", activeUi) : m.language.toUpperCase()} · ${new Date(m.time).toLocaleTimeString()} · ${m.status}`,
               )}
               <Text selectable style={[s.message, { color: c.ink }]}>
                 {m.template
@@ -1330,6 +1358,11 @@ export default function App() {
     clock - peerLocation.time < 30000;
   const polar = fresh ? position(location, peerLocation, heading) : null;
   const radarDistance = polar ? polar.distance : null;
+  const discoveredPeers = [
+    ...peers.map((peer) => ({ ...peer, route: "direct" })),
+    ...meshPeers.map((id) => ({ id, name: id.slice(0, 8), transport: "BLE mesh", route: "direct" })),
+  ];
+  const visiblePeers = discoveredPeers.filter((peer) => peerFilter === "all" || peer.route === peerFilter);
   useEffect(() => {
     if (
       !connected ||
@@ -1748,25 +1781,44 @@ export default function App() {
         {note(
           "Bluetooth strength cannot determine a device’s direction. Devices without coordinates appear only in the discovery list.",
         )}
-        {peers.length > 0 &&
+        {discoveredPeers.length > 0 &&
           card(
             <>
               {title("Talk2 devices nearby")}
-              {peers.map((p) => (
+              <View style={s.row}>
+                {["all", "direct", "relayed"].map((mode) => button(mode === "all" ? "All" : mode === "direct" ? "Direct" : "Relayed", () => setPeerFilter(mode as any), peerFilter !== mode))}
+              </View>
+              {visiblePeers.map((p) => (
                 <View style={s.row} key={p.transport + p.id}>
                   <Text style={{ color: c.ink, flex: 1 }}>
                     {p.name} · {p.transport}
                   </Text>
-                  {button(
-                    "Join",
-                    () => run(() => Native.join(p.transport, p.id)),
-                    true,
-                  )}
+                  {p.transport === "BLE mesh" ? <Text style={{ color: c.muted }}>Mesh link</Text> : button("Join", () => run(() => Native.join(p.transport, p.id)), true)}
                 </View>
               ))}
             </>,
           )}
         {button("Discover nearby phones", () => setShowConnect(true), true)}
+        {card(
+          <>
+            {title("BLE text & SOS mesh")}
+            {note("Separate from paired chat. Nearby phones can read relayed text; packet signatures identify the sender but do not encrypt its contents. Keep private details out of mesh messages.")}
+            {button(meshActive ? "Stop BLE mesh" : "Start BLE mesh", () => run(async () => {
+              if (meshActive) { Mesh.stop(); setMeshActive(false); setMeshPeers([]); return; }
+              await permissions("radio");
+              const id = await Mesh.start(); setMeshNode(id); setMeshActive(true);
+            }), true)}
+            {note(i18n.translate(meshActive ? "BLE mesh is active" : "BLE mesh is off until you start it.", activeUi))}{meshActive ? note(`${meshPeers.length} ${i18n.translate("Nearby BLE links", activeUi)} · ${meshNode.slice(0, 8)}`) : null}
+            <Field value={meshText} onChangeText={setMeshText} placeholder="Public mesh text or SOS details" multiline c={c} />
+            <View style={s.row}>
+              {button("Send mesh text", () => run(async () => { if (!meshActive) throw new Error("Start BLE mesh first"); await Mesh.sendText("*", meshText); setMeshText(""); }), true, !meshText.trim() || !meshActive)}
+              {button("Broadcast SOS", () => Alert.alert("Broadcast SOS?", meshText || "Emergency assistance needed", [
+                { text: "Cancel" },
+                { text: "Broadcast SOS", style: "destructive", onPress: () => run(async () => { if (!meshActive) throw new Error("Start BLE mesh first"); await Mesh.sendSOS(meshText || "Emergency assistance needed"); setMeshText(""); }) },
+              ]), false, !meshActive)}
+            </View>
+          </>,
+        )}
       </>
     );
   else if (tab === "alert")

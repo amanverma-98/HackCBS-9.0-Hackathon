@@ -62,3 +62,23 @@ file passes verification; startup rechecks installed files.
 Photo selection uses Android's system document picker and stores a resized local JPEG.
 No broad gallery permission is requested. Voice clips are app-private and cleared with
 history. API keys stay on the Node server. Backgrounding stops microphone and sensors.
+
+## Stage 2 BLE mesh prototype
+
+BLE mesh is a separate, user-started native advertiser/scanner/GATT path. It
+stops when the app is backgrounded; no foreground service or locked-screen mesh
+claim is made. It is bounded to three GATT neighbors, uses a versioned packet
+envelope with a four-hop/24-hour bound, 8 KiB packet cap, 1,200-character body
+cap, duplicate cache and a small `AtomicFile` queue separate from saved UI state.
+The origin signs packet content with a persistent P-256 Android Keystore key;
+mutable hop and previous-hop fields are excluded from that signature.
+
+The UI warns that BLE mesh body text is public to every relay. Origin signatures
+provide authenticity and integrity, not confidentiality or verified real-world
+identity. Do not send private or sensitive details through mesh text. Directed
+text can return a destination receipt; broadcast SOS has no complete/cancelled
+incident lifecycle yet. A GATT write is not proof of remote custody; the
+application custody event is emitted only after a peer accepts and stores the
+packet. Retry, reassembly, Android OEM behavior and A-B-C relay delivery require
+physical device checks. The direct session still uses its existing independent
+RFCOMM/Wi-Fi Direct `SecureChannel`.

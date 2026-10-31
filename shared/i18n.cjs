@@ -31,6 +31,16 @@ const mr = {
   "Connect nearby.": "जवळच्या फोनशी जोडा.", "Talk2 · a little closer": "Talk2 · थोडे जवळ",
 };
 const more = {
+  "BLE text & SOS mesh": "BLE मजकूर आणि SOS जाळे",
+  "Separate from paired chat. Nearby phones can read relayed text; packet signatures identify the sender but do not encrypt its contents. Keep private details out of mesh messages.": "जोडलेल्या गप्पांपासून वेगळे. रिले करणारे जवळचे फोन संदेश वाचू शकतात; स्वाक्षरी पाठवणाऱ्याची ओळख देते, पण मजकूर कूटबद्ध करत नाही. जाळ्यात खाजगी माहिती पाठवू नका.",
+  "Start BLE mesh": "BLE जाळे सुरू करा", "Stop BLE mesh": "BLE जाळे थांबवा",
+  "BLE mesh is active": "BLE जाळे सुरू आहे", "BLE mesh is off until you start it.": "तुम्ही सुरू करेपर्यंत BLE जाळे बंद राहील.",
+  "Nearby BLE links": "जवळचे BLE दुवे", "Public mesh text or SOS details": "सार्वजनिक जाळे संदेश किंवा SOS तपशील",
+  "Send mesh text": "जाळे संदेश पाठवा", "Broadcast SOS": "SOS प्रसारित करा",
+  "Talk2 devices nearby": "जवळची Talk2 उपकरणे", "All": "सर्व", "Direct": "थेट", "Relayed": "रिले केलेले",
+  "Mesh link": "जाळे दुवा", "Mesh SOS": "जाळे SOS", "BLE mesh": "BLE जाळे",
+  "Language unknown": "भाषा अज्ञात", "Broadcast SOS?": "SOS प्रसारित करायचा?",
+  "Emergency assistance needed": "आपत्कालीन मदतीची आवश्यकता आहे", "Cancel": "रद्द करा",
   "Choose your role": "तुमची भूमिका निवडा", "SPEECH PACKS · DOWNLOAD OPTIONAL": "भाषा पॅक · डाउनलोड ऐच्छिक",
   "Available offline · not installed": "ऑफलाइन उपलब्ध · इन्स्टॉल केलेले नाही", "Download failed · retry available": "डाउनलोड अयशस्वी · पुन्हा प्रयत्न करा",
   "Partial download · resumable": "अर्धवट डाउनलोड · पुढे सुरू ठेवता येईल", "Downloading": "डाउनलोड सुरू आहे",

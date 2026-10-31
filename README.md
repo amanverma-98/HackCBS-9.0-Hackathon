@@ -25,6 +25,9 @@ Java device integrations, and an optional Node.js assistant backend.
 - Independent UI, source speech, translation target and TTS language settings.
   English and Marathi UI strings are bundled with the app; other offered UI
   languages show coverage and fall back to English.
+- Experimental, user-started BLE text/SOS mesh relay alongside the existing
+  paired RFCOMM/Wi-Fi Direct path. Mesh messages are signed but visible to relay
+  phones; keep private details out. The mesh stops when Talk2 is backgrounded.
 
 First-run setup, text chat and Original voice do not require model downloads or
 internet. Speech recognition and TTS require their selected local packs. The
