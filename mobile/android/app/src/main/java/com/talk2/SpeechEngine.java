@@ -28,11 +28,15 @@ public final class SpeechEngine {
   try{mic.stop();capture.join(2000);if(capture.isAlive())throw new IOException("Microphone did not stop");if(captureError!=null)throw new IOException(captureError);return pcm.toByteArray();}
   finally{mic.release();mic=null;}
  }
- private OrtSession session(String pack,String name)throws Exception{try(OrtSession.SessionOptions options=new OrtSession.SessionOptions()){options.setIntraOpNumThreads(2);options.setInterOpNumThreads(1);return OrtEnvironment.getEnvironment().createSession(store.file(pack,name).getAbsolutePath(),options);}}
+ private OrtSession session(String pack,String name)throws Exception{try(OrtSession.SessionOptions options=new OrtSession.SessionOptions()){options.setIntraOpNumThreads(2);options.setInterOpNumThreads(1);OrtSession session=OrtEnvironment.getEnvironment().createSession(store.file(pack,name).getAbsolutePath(),options);
+  boolean stt=name.startsWith("indicwav2vec");try{if(session.getInputInfo().size()!=1||session.getOutputInfo().size()!=1)throw new IOException("Incompatible speech model");
+  TensorInfo input=(TensorInfo)session.getInputInfo().values().iterator().next().getInfo(),output=(TensorInfo)session.getOutputInfo().values().iterator().next().getInfo();
+  if(input.getShape().length!=2||input.type!=(stt?OnnxJavaType.FLOAT:OnnxJavaType.INT64)||output.type!=OnnxJavaType.FLOAT||(stt?output.getShape().length!=3:output.getShape().length>2))throw new IOException("Incompatible speech model");return session;
+  }catch(Exception e){session.close();throw new IOException("Incompatible speech model",e);}}}
  synchronized String transcribe(byte[] bytes,String lang)throws Exception{
-  if(!store.file(lang,"ready.json").exists())throw new IOException("Install "+lang+" speech pack first");int n=bytes.length/2;if(n<1600)throw new IOException("Hold to talk for at least 0.1 seconds");
+  if(!store.ready(lang))throw new IOException("Install "+lang+" speech pack first");int n=bytes.length/2;if(n<1600)throw new IOException("Hold to talk for at least 0.1 seconds");
   ShortBuffer shorts=ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN).asShortBuffer();double mean=0;for(int i=0;i<n;i++)mean+=shorts.get(i)/32768.0;mean/=n;double variance=0;for(int i=0;i<n;i++)variance+=Math.pow(shorts.get(i)/32768.0-mean,2);if(variance/n<1e-9)throw new IOException("Recording is silent. Check microphone permission and speak closer.");double sd=Math.sqrt(variance/n+1e-7);FloatBuffer values=FloatBuffer.allocate(n);for(int i=0;i<n;i++)values.put((float)((shorts.get(i)/32768.0-mean)/sd));values.flip();
-  JSONObject vocab=new JSONObject(ModelStore.read(store.file(lang,"indicwav2vec-"+lang+"-vocab.json")));Map<Integer,String> inverse=new HashMap<>();Iterator<String> keys=vocab.keys();while(keys.hasNext()){String k=keys.next();inverse.put(vocab.getInt(k),k);}int size=Collections.max(inverse.keySet())+1,blank=vocab.optInt("<pad>",vocab.optInt("[PAD]",0));
+  JSONObject vocab=new JSONObject(ModelStore.read(store.file(lang,"indicwav2vec-"+lang+"-vocab.json")));if(!vocab.has("<pad>")&&!vocab.has("[PAD]"))throw new IOException("Incompatible speech model");Map<Integer,String> inverse=new HashMap<>();Iterator<String> keys=vocab.keys();while(keys.hasNext()){String k=keys.next();inverse.put(vocab.getInt(k),k);}int size=Collections.max(inverse.keySet())+1,blank=vocab.optInt("<pad>",vocab.optInt("[PAD]",0));
   try(OrtSession s=session(lang,"indicwav2vec-"+lang+"-int8.onnx");OnnxTensor input=OnnxTensor.createTensor(OrtEnvironment.getEnvironment(),values,new long[]{1,n});OrtSession.Result result=s.run(Collections.singletonMap(s.getInputNames().iterator().next(),input))){
    float[][] frames=((float[][][])result.get(0).getValue())[0];StringBuilder out=new StringBuilder();int previous=-1;
    for(float[] frame:frames){if(frame.length!=size)throw new IOException("STT model and vocabulary dimensions differ");int best=0;for(int j=1;j<frame.length;j++)if(frame[j]>frame[best])best=j;String token=inverse.getOrDefault(best,"");if(best!=blank&&best!=previous&&!token.startsWith("<")&&!token.startsWith("["))out.append(token.equals("|")?" ":token);previous=best;}
@@ -40,7 +44,7 @@ public final class SpeechEngine {
   }
  }
  synchronized void speak(String text,String lang)throws Exception{
-  if(!store.file(lang,"ready.json").exists())throw new IOException("Install "+lang+" speech pack first");
+  if(!store.ready(lang))throw new IOException("Install "+lang+" speech pack first");
   JSONObject v=new JSONObject(ModelStore.read(store.file(lang,"vits-"+lang+"-vocab.json")));boolean inter=v.optBoolean("interleave_pad",true);long pad=v.optLong("pad_id",0);List<Long> ids=new ArrayList<>();if(inter)ids.add(pad);int unknown=0,mapped=0;
   for(int cp:text.toLowerCase(Locale.ROOT).replaceAll("\\s+"," ").codePoints().toArray()){
    String ch=new String(Character.toChars(cp));if(!v.has(ch)){if(Character.isLetterOrDigit(cp)||Character.getType(cp)==Character.NON_SPACING_MARK||Character.getType(cp)==Character.COMBINING_SPACING_MARK)unknown++;continue;}ids.add(v.getLong(ch));mapped++;if(inter)ids.add(pad);

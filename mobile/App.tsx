@@ -19,6 +19,7 @@ import {
   View,
   useColorScheme,
 } from "react-native";
+import { TranslatedVoice } from "./src/TranslatedVoice";
 import { MeshVoicePanel } from "./src/MeshVoicePanel";
 import { Native, Mesh, events, permissions } from "./src/native";
 import { DEFAULT_BACKEND_URL, DEFAULT_MANIFEST_URL } from "./src/config";
@@ -1810,7 +1811,7 @@ export default function App() {
         {card(
           <>
             {title("BLE text & SOS mesh")}
-            <MeshVoicePanel active={meshActive} source={data.sourceSpeech} ui={activeUi} onSent={async (id, uri, language, transcript) => {
+            <MeshVoicePanel installed={packs} available={(manifest || upstream).packs} active={meshActive} source={data.sourceSpeech} ui={activeUi} onSent={async (id, uri, language, transcript) => {
               await add({ id, kind: "voice", text: transcript || "Public voice note", transcript, language, time: Date.now(), direction: "out", status: "queued", mesh: true, audioUri: uri });
             }} />
             {note("Separate from paired chat. Nearby phones can read relayed text; packet signatures identify the sender but do not encrypt its contents. Keep private details out of mesh messages.")}

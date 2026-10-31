@@ -15,7 +15,7 @@ public final class TranslationEngine {
  synchronized String translate(String text,String source,String target)throws Exception{
   if(source.equals(target))return text;
   if(!(source.equals("hi")&&target.equals("mr")||source.equals("mr")&&target.equals("hi")))throw new IOException("General offline translation for this pair is not validated. Original text is preserved. Quick alerts work across all ten languages.");
-  if(!store.file("translation","ready.json").exists())throw new IOException("Download the shared translation pack first");
+  if(!store.ready("translation"))throw new IOException("Download the shared translation pack first");
   JSONObject root=new JSONObject(ModelStore.read(store.file("translation","indictrans2-vocab.json")));Tokenizer src=new Tokenizer(root,"src"),tgt=new Tokenizer(root,"tgt");List<Long> tokens=new ArrayList<>();tokens.add(src.tags.getLong(source.equals("hi")?"hin_Deva":"mar_Deva"));tokens.add(src.tags.getLong(target.equals("hi")?"hin_Deva":"mar_Deva"));tokens.addAll(src.encode(text));tokens.add(src.special.getLong("</s>"));if(tokens.size()>256)throw new IOException("Translation input too long");
   long[] ids=tokens.stream().mapToLong(Long::longValue).toArray(),mask=new long[ids.length];Arrays.fill(mask,1);OrtEnvironment env=OrtEnvironment.getEnvironment();
   try(OrtSession.SessionOptions opts=new OrtSession.SessionOptions()){

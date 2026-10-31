@@ -282,3 +282,27 @@ Checks:
 
 Next milestone: add receiver transcript translation/TTS with explicit pack and
 language checks, preserving the original audio on every failure.
+
+## Milestone 3B checkpoint
+
+3A source/checkpoint commit: 6d8c835. Added optional source transcription of the
+saved original clip, source-language metadata, receiver text translation and
+separate TTS actions. All four language settings stay independent. Original
+playback survives missing packs, incompatible vocab/model, unsupported pair and
+TTS/target mismatch. Failed transcription does not erase the recorded draft.
+
+Files: mobile/src/TranslatedVoice.tsx, mobile/src/MeshVoicePanel.tsx, mobile/App.tsx,
+shared/language-state.cjs, tests/stage3.test.cjs, SpeechEngine.java,
+TranslationEngine.java, docs/MODEL_HOSTING.md, this checkpoint. Stage 3 strings
+are bundled in shared/stage3-ui.cjs with English fallback and Marathi coverage.
+
+npm run check: PASS, 19 Node tests plus TypeScript. Runtime model guards validate
+actual session metadata; no tensor names or language assets invented. No local
+ONNX files exist, and adb device list is empty: real inference and physical
+voice-to-voice acceptance remain NOT TESTED. Hindi STT/TTS missing from manifest;
+only hi<->mr general translation is enabled. Full evidence matrix and reproducible
+Marathi identity/hi-text-to-mr demo paths are in docs/MODEL_HOSTING.md.
+
+Next: location consent/expiry/accuracy, common radar/list filtering, reference
+source/verification contract documentation, and final Android validation.
+`Gradle 8.13 -p mobile/android :app:compileDebugJavaWithJavac --console=plain`: BUILD SUCCESSFUL in 3s (30 tasks, 4 executed) for 3B.
