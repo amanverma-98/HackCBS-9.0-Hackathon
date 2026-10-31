@@ -12,4 +12,5 @@ function languageState(transcript, source, target, tts, installed) {
     : !installed[tts] ? "Target speech pack missing" : "");
   return { route, translationReason, speechReason, originalPlayable: true };
 }
+
 module.exports = { recognitionReason, languageState };

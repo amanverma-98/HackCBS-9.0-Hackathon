@@ -167,6 +167,7 @@ function Button({
     </Pressable>
   );
 }
+
 function Field({
   value,
   onChangeText,
@@ -192,6 +193,7 @@ function Field({
     />
   );
 }
+
 function notifyMessage(setError: (message: string) => void) {
   try {
     if (Native && typeof Native.vibrateForMessage === "function") {
@@ -201,6 +203,7 @@ function notifyMessage(setError: (message: string) => void) {
     // Notification feedback must never interrupt receiving or speech playback.
   }
 }
+
 export default function App() {
   const [data, setData] = useState(initial),
     ref = useRef(data),
@@ -338,6 +341,7 @@ export default function App() {
       if (label) setBusy("");
     }
   };
+  
   const wire = async (m: any) => Native.send(JSON.stringify(m));
   const sendPosition = async (fix: any) => {
     if (!locationPolicy.usableLocation(fix)) return;
