@@ -1,0 +1,17 @@
+Talk2
+Copyright 2026 Talk2 contributors.
+
+New React Native and Java implementation for Talk2.
+
+Localized alert phrases and Python model-export scripts are maintained in this
+project. Verify permissions/licenses for every external checkpoint, tokenizer,
+dataset and copied asset before redistribution. Model cards and upstream
+licenses remain authoritative for downloaded model files.
+
+React and React Native: Meta Platforms, Inc. and affiliates (MIT).
+ONNX Runtime: Microsoft Corporation (MIT).
+Gradle wrapper: Gradle contributors (Apache-2.0).
+AI4Bharat and other acoustic/translation checkpoints: consult each actual model card.
+Meta MMS-TTS checkpoints: consult their non-commercial model licensing terms.
+Model weights are not included in the source ZIP. This source license does not
+relicense external model weights or grant rights to trademarks or artwork.

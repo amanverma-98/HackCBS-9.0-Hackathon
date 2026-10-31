@@ -1,0 +1,1 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" xmlns:tools="http://schemas.android.com/tools"><application android:label="Talk2 Dev" android:usesCleartextTraffic="true" tools:replace="android:label,android:usesCleartextTraffic"/></manifest>

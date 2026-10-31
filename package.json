@@ -1,0 +1,19 @@
+{
+  "name": "talk2",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": [
+    "mobile",
+    "server"
+  ],
+  "scripts": {
+    "test": "node --test tests/*.test.cjs",
+    "start": "npm --workspace mobile start",
+    "android": "npm --workspace mobile run android",
+    "server": "npm --workspace server start",
+    "check": "npm test && npm --workspace mobile run typecheck"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

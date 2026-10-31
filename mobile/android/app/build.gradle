@@ -1,0 +1,26 @@
+apply plugin: 'com.android.application'
+apply plugin: 'com.facebook.react'
+react {
+ root = file('../..')
+ reactNativeDir = file('../../../node_modules/react-native')
+ codegenDir = file('../../../node_modules/@react-native/codegen')
+ cliFile = file('../../../node_modules/react-native/cli.js')
+ def hermesBin = System.getProperty('os.name').toLowerCase().contains('windows') ? 'hermesc.exe' : 'hermesc'
+ hermesCommand = file('../../../node_modules/react-native/sdks/hermesc/%OS-BIN%/' + hermesBin).absolutePath
+ autolinkLibrariesWithApp()
+}
+android {
+ namespace 'com.talk2'
+ compileSdk rootProject.ext.compileSdkVersion
+ ndkVersion rootProject.ext.ndkVersion
+ defaultConfig { applicationId 'com.talk2'; minSdkVersion 24; targetSdkVersion 35; versionCode 2; versionName '1.1.0'; ndk { abiFilters.addAll((project.findProperty('reactNativeArchitectures') ?: 'arm64-v8a,armeabi-v7a,x86_64').split(',')) } }
+ signingConfigs { release { if (System.getenv('TALK2_KEYSTORE')) { storeFile file(System.getenv('TALK2_KEYSTORE')); storePassword System.getenv('TALK2_STORE_PASSWORD'); keyAlias System.getenv('TALK2_KEY_ALIAS'); keyPassword System.getenv('TALK2_KEY_PASSWORD') } } }
+ buildTypes {
+  debug { applicationIdSuffix '.dev'; versionNameSuffix '-dev' }
+  release { minifyEnabled false; if(System.getenv('TALK2_KEYSTORE')) signingConfig signingConfigs.release }
+  standalone { initWith release; debuggable false; signingConfig signingConfigs.debug; matchingFallbacks = ['release'] }
+ }
+ compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
+}
+dependencies { implementation('com.facebook.react:react-android'); implementation('com.facebook.react:hermes-android'); implementation('com.microsoft.onnxruntime:onnxruntime-android:1.20.0') }
+

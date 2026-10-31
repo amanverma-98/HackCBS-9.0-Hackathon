@@ -1,0 +1,280 @@
+{
+  "schema": 1,
+  "version": "talk2-model-pack-v1",
+  "packs": {
+    "ta": {
+      "files": [
+        {
+          "name": "indicwav2vec-ta-int8.onnx",
+          "bytes": 356976661,
+          "sha256": "3745eea62c52f3d050b289d94fd1fecf377456038de6d69405638520b4fab25a",
+          "url": "https://github.com/Somu9450/Talk2/releases/download/model-pack-v1/indicwav2vec-ta-int8.onnx"
+        },
+        {
+          "name": "indicwav2vec-ta-vocab.json",
+          "bytes": 562,
+          "sha256": "f9b4235074ff0b0e6c873e518ec11d88fab6256d0cd2f31ae1307b77523faac7",
+          "url": "https://github.com/Somu9450/Talk2/releases/download/model-pack-v1/indicwav2vec-ta-vocab.json"
+        },
+        {
+          "name": "vits-ta-int8.onnx",
+          "bytes": 38541437,
+          "sha256": "a2c34147775e2b7c023fadf0167e641a1b87f528f38ebb23f5345a124d0e36bc",
+          "url": "https://github.com/Somu9450/Talk2/releases/download/model-pack-v1/vits-ta-int8.onnx"
+        },
+        {
+          "name": "vits-ta-vocab.json",
+          "bytes": 838,
+          "sha256": "2a727d42886319d91d3f8baa3dcd845a5d3f527e46c6722bf68d36ef6edb80a7",
+          "url": "https://github.com/Somu9450/Talk2/releases/download/model-pack-v1/vits-ta-vocab.json"
+        }
+      ]
+    },
+    "bn": {
+      "files": [
+        {
+          "name": "indicwav2vec-bn-int8.onnx",
+          "bytes": 357012634,
+          "sha256": "c8474115186d6717e18c895975abbc171b42685a168a90726a85a8c872b0314f",
+          "url": "https://github.com/Somu9450/Talk2/releases/download/model-pack-v1/indicwav2vec-bn-int8.onnx"
+        },
+        {
+          "name": "indicwav2vec-bn-vocab.json",
+          "bytes": 940,
+          "sha256": "03c6c1dc4cc46bb5af1b812c9c204a67eb4c8627e7a1634da67e19604cfafb5c",
+          "url": "https://github.com/Somu9450/Talk2/releases/download/model-pack-v1/indicwav2vec-bn-vocab.json"
+        },
+        {
+          "name": "vits-bn-int8.onnx",
+          "bytes": 38544508,
+          "sha256": "ddc0973866140eb1e35ad47ec856de37ed6bd8e19a311a1d44b1a1b3e0117337",
+          "url": "https://github.com/Somu9450/Talk2/releases/download/model-pack-v1/vits-bn-int8.onnx"
+        },
+        {
+          "name": "vits-bn-vocab.json",
+          "bytes": 1060,
+          "sha256": "04b48de8e6130b2dc637779554274bfab8aab39c4aebafbc17f35cb836ca6cfe",
+          "url": "https://github.com/Somu9450/Talk2/releases/download/model-pack-v1/vits-bn-vocab.json"
+        }
+      ]
+    },
+    "gu": {
+      "files": [
+        {
+          "name": "indicwav2vec-gu-int8.onnx",
+          "bytes": 356995156,
+          "sha256": "a1d6e34f35701fe8453d2d115ecfe94df3ca14de66f597267a7daae59aaceb22",
+          "url": "https://github.com/Somu9450/Talk2/releases/download/model-pack-v1/indicwav2vec-gu-int8.onnx"
+        },
+        {
+          "name": "indicwav2vec-gu-vocab.json",
+          "bytes": 761,
+          "sha256": "3b3eca2404b299af392495a7a718997015fe90b48fba724adb021a0d6feb7191",
+          "url": "https://github.com/Somu9450/Talk2/releases/download/model-pack-v1/indicwav2vec-gu-vocab.json"
+        },
+        {
+          "name": "vits-gu-int8.onnx",
+          "bytes": 38541798,
+          "sha256": "8faf08e85802a38b732ab07f3b6e5eef045eacaf220551dd9e0fac858f67697f",
+          "url": "https://github.com/Somu9450/Talk2/releases/download/model-pack-v1/vits-gu-int8.onnx"
+        },
+        {
+          "name": "vits-gu-vocab.json",
+          "bytes": 901,
+          "sha256": "84bffeea08f2fc39f706d1986a5c22e5caefb0540572a63875e7392147b2db04",
+          "url": "https://github.com/Somu9450/Talk2/releases/download/model-pack-v1/vits-gu-vocab.json"
+        }
+      ]
+    },
+    "mr": {
+      "files": [
+        {
+          "name": "indicwav2vec-mr-int8.onnx",
+          "bytes": 356993113,
+          "sha256": "098efe1166e22090d2b0afff3af5260934efe11fbdf313ccfaa9a9a4f94913f7",
+          "url": "https://github.com/Somu9450/Talk2/releases/download/model-pack-v1/indicwav2vec-mr-int8.onnx"
+        },
+        {
+          "name": "indicwav2vec-mr-vocab.json",
+          "bytes": 740,
+          "sha256": "8dc8796493369c4680ab0fa4e0b46cac5ffaefe7eb5f4838c0fdce4b0ab8d730",
+          "url": "https://github.com/Somu9450/Talk2/releases/download/model-pack-v1/indicwav2vec-mr-vocab.json"
+        },
+        {
+          "name": "vits-mr-int8.onnx",
+          "bytes": 38544308,
+          "sha256": "f10e52cc2d2f7eb49f0af90f44bffece5e6c8bcfc5ad17b3b8c4f3d59705a879",
+          "url": "https://github.com/Somu9450/Talk2/releases/download/model-pack-v1/vits-mr-int8.onnx"
+        },
+        {
+          "name": "vits-mr-vocab.json",
+          "bytes": 1067,
+          "sha256": "77ea56c583e667a3e9af10f204781444d202e3b244c0eb3a7494907192ff1bc6",
+          "url": "https://github.com/Somu9450/Talk2/releases/download/model-pack-v1/vits-mr-vocab.json"
+        }
+      ]
+    },
+    "kn": {
+      "files": [
+        {
+          "name": "indicwav2vec-kn-int8.onnx",
+          "bytes": 357027036,
+          "sha256": "e7746d3e743c3f2b0553b1b1cd69793f6cb6b6400c54f35c10c994c52f569d1c",
+          "url": "https://github.com/Somu9450/Talk2/releases/download/model-pack-v1/indicwav2vec-kn-int8.onnx"
+        },
+        {
+          "name": "indicwav2vec-kn-vocab.json",
+          "bytes": 1058,
+          "sha256": "c1d5d282e4ce77075d41593091c53d576b90370bb21cd55de92b086e82922e18",
+          "url": "https://github.com/Somu9450/Talk2/releases/download/model-pack-v1/indicwav2vec-kn-vocab.json"
+        },
+        {
+          "name": "vits-kn-int8.onnx",
+          "bytes": 38544689,
+          "sha256": "2682ceb9f91f88bbae8af2a8b5ab68c3f1c6b2ef174ae290205ccb74a77d4f0a",
+          "url": "https://github.com/Somu9450/Talk2/releases/download/model-pack-v1/vits-kn-int8.onnx"
+        },
+        {
+          "name": "vits-kn-vocab.json",
+          "bytes": 1074,
+          "sha256": "68e1c4f2b73967c05276a533235b61b8a07a0806ce38ec142998e71a9d437744",
+          "url": "https://github.com/Somu9450/Talk2/releases/download/model-pack-v1/vits-kn-vocab.json"
+        }
+      ]
+    },
+    "ml": {
+      "files": [
+        {
+          "name": "indicwav2vec-ml-int8.onnx",
+          "bytes": 357001338,
+          "sha256": "befafcc0218e25d4e9853e1b3ce59df273514704968ec67eb97945c63c0a0664",
+          "url": "https://github.com/Somu9450/Talk2/releases/download/model-pack-v1/indicwav2vec-ml-int8.onnx"
+        },
+        {
+          "name": "indicwav2vec-ml-vocab.json",
+          "bytes": 828,
+          "sha256": "87c6fee51ada83b24505f51ee25157c7985dfd0239b0a7cfb2876788be708b48",
+          "url": "https://github.com/Somu9450/Talk2/releases/download/model-pack-v1/indicwav2vec-ml-vocab.json"
+        },
+        {
+          "name": "vits-ml-int8.onnx",
+          "bytes": 38546416,
+          "sha256": "0b1bee190dc3fba442d8302ce25cd27b3598e3b2695b377a136d941babc554ef",
+          "url": "https://github.com/Somu9450/Talk2/releases/download/model-pack-v1/vits-ml-int8.onnx"
+        },
+        {
+          "name": "vits-ml-vocab.json",
+          "bytes": 1196,
+          "sha256": "24a099403c32af39c778f9b93178810ca112afd0709beabe81b4939b94f54182",
+          "url": "https://github.com/Somu9450/Talk2/releases/download/model-pack-v1/vits-ml-vocab.json"
+        }
+      ]
+    },
+    "te": {
+      "files": [
+        {
+          "name": "indicwav2vec-te-int8.onnx",
+          "bytes": 356991056,
+          "sha256": "9f0a331bd05fdc285c151c13670ef66035ccaa680b845e5265c874d043a54a83",
+          "url": "https://github.com/Somu9450/Talk2/releases/download/model-pack-v1/indicwav2vec-te-int8.onnx"
+        },
+        {
+          "name": "indicwav2vec-te-vocab.json",
+          "bytes": 718,
+          "sha256": "e2431a43c4ee005bc2c9d09ed22999bf664bf19657065d014fc5b8d548b80cba",
+          "url": "https://github.com/Somu9450/Talk2/releases/download/model-pack-v1/indicwav2vec-te-vocab.json"
+        },
+        {
+          "name": "vits-te-int8.onnx",
+          "bytes": 38542767,
+          "sha256": "0435eaec8126faabba867a4a054ed9f832ef2c1e479f1f9d343292e83451953a",
+          "url": "https://github.com/Somu9450/Talk2/releases/download/model-pack-v1/vits-te-int8.onnx"
+        },
+        {
+          "name": "vits-te-vocab.json",
+          "bytes": 952,
+          "sha256": "a135d7e87aedb2d9b3ccca42a277d1e15edbaaac36aa90b7e8e885abe4bf8664",
+          "url": "https://github.com/Somu9450/Talk2/releases/download/model-pack-v1/vits-te-vocab.json"
+        }
+      ]
+    },
+    "or": {
+      "files": [
+        {
+          "name": "indicwav2vec-or-int8.onnx",
+          "bytes": 356994131,
+          "sha256": "8debe8291d8bbe56852d4f3167cd380a1629a91b698bfe15de568dbfff46072f",
+          "url": "https://github.com/Somu9450/Talk2/releases/download/model-pack-v1/indicwav2vec-or-int8.onnx"
+        },
+        {
+          "name": "indicwav2vec-or-vocab.json",
+          "bytes": 891,
+          "sha256": "4363239828c2c101ad9219e787ea6e5089c23aa189c590d766ccfc322713be0e",
+          "url": "https://github.com/Somu9450/Talk2/releases/download/model-pack-v1/indicwav2vec-or-vocab.json"
+        },
+        {
+          "name": "vits-or-int8.onnx",
+          "bytes": 38544893,
+          "sha256": "0eeae90df03ab2d7a8d6d2ff84d8b15da1533b6d2b007f62790e8abdc48afe91",
+          "url": "https://github.com/Somu9450/Talk2/releases/download/model-pack-v1/vits-or-int8.onnx"
+        },
+        {
+          "name": "vits-or-vocab.json",
+          "bytes": 1089,
+          "sha256": "34128ee11e74c4328a70bcf277c56e02001770bdf1773e5b6b742b0e71e0d8d8",
+          "url": "https://github.com/Somu9450/Talk2/releases/download/model-pack-v1/vits-or-vocab.json"
+        }
+      ]
+    },
+    "en": {
+      "files": [
+        {
+          "name": "indicwav2vec-en-int8.onnx",
+          "bytes": 122921772,
+          "sha256": "9d64361bf2407fb7278cf546439786704ae05b92e5762022418f35968bfa3f65",
+          "url": "https://github.com/Somu9450/Talk2/releases/download/model-pack-v1/indicwav2vec-en-int8.onnx"
+        },
+        {
+          "name": "indicwav2vec-en-vocab.json",
+          "bytes": 292,
+          "sha256": "91be72ec00818d246b96e287630a7b03187e367907835177b618276798df725d",
+          "url": "https://github.com/Somu9450/Talk2/releases/download/model-pack-v1/indicwav2vec-en-vocab.json"
+        },
+        {
+          "name": "vits-en-int8.onnx",
+          "bytes": 38537589,
+          "sha256": "2bacdc00e639a3491171147d04961856d8c120f8372120a353d153803ee646ad",
+          "url": "https://github.com/Somu9450/Talk2/releases/download/model-pack-v1/vits-en-int8.onnx"
+        },
+        {
+          "name": "vits-en-vocab.json",
+          "bytes": 510,
+          "sha256": "f9e92441163c5ae4ac0e8cba1b87523711d377d0d34b715629fc383433bef3ec",
+          "url": "https://github.com/Somu9450/Talk2/releases/download/model-pack-v1/vits-en-vocab.json"
+        }
+      ]
+    },
+    "translation": {
+      "files": [
+        {
+          "name": "indictrans2-encoder-int8.onnx",
+          "bytes": 310849661,
+          "sha256": "42eb5092f2057d937837e17df79b133f12e0e24ee2905dfbc97613e4a1de7f77",
+          "url": "https://github.com/Somu9450/Talk2/releases/download/model-pack-v1/indictrans2-encoder-int8.onnx"
+        },
+        {
+          "name": "indictrans2-decoder-int8.onnx",
+          "bytes": 395692226,
+          "sha256": "bdecfeb50500539668b62423106ff589eb7743d67e1472419278a62c551edeae",
+          "url": "https://github.com/Somu9450/Talk2/releases/download/model-pack-v1/indictrans2-decoder-int8.onnx"
+        },
+        {
+          "name": "indictrans2-vocab.json",
+          "bytes": 8134407,
+          "sha256": "e1d1debd0f9925cc304e043ae72f5a50c374e75ff536b34ad26048016741239f",
+          "url": "https://github.com/Somu9450/Talk2/releases/download/model-pack-v1/indictrans2-vocab.json"
+        }
+      ]
+    }
+  }
+}
