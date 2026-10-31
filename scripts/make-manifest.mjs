@@ -7,6 +7,7 @@ if (!dir || !base?.startsWith("https://"))
   throw new Error(
     "Usage: node scripts/make-manifest.mjs ASSET_DIR HTTPS_RELEASE_BASE [OUTPUT]",
   );
+  
 const packs = {},
   available = await readdir(dir);
 async function asset(name) {

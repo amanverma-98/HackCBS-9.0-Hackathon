@@ -33,6 +33,7 @@ from transformers import AutoTokenizer, VitsModel
 
 OUT_DIR = os.environ.get("TALK2_MODEL_OUTPUT", "model-assets")
 
+
 # Meta's MMS-TTS checkpoints: VITS architecture, grapheme (character) input, so no
 # phonemiser has to be shipped for ten languages. Repo ids follow ISO 639-3.
 LANGUAGES = {
@@ -48,9 +49,11 @@ LANGUAGES = {
     "en": "facebook/mms-tts-eng",
 }
 
+
 # Tracing length. Large enough that the model's dynamic padding branches evaluate as
 # True during tracing, so the padding logic is baked into the exported graph.
 TRACE_LENGTH = 300
+
 
 
 def _from_pretrained(loader, repo_id):
@@ -60,6 +63,7 @@ def _from_pretrained(loader, repo_id):
     except Exception as exc:
         print(f"  hub load failed ({exc}); retrying from the local cache")
         return loader.from_pretrained(repo_id, local_files_only=True)
+
 
 
 def export_vocab(repo_id, lang_code):
@@ -92,6 +96,7 @@ def export_vocab(repo_id, lang_code):
     if " " not in vocab:
         print("  WARNING: no space symbol; word boundaries will be lost in synthesis")
     return vocab
+
 
 
 class VitsExportWrapper(torch.nn.Module):
