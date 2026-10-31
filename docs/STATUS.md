@@ -65,8 +65,25 @@ on the actual target phones.
 - History, voice files and the photo live in app-private storage with Android backup
   disabled, without an extra database encryption layer. Voice storage is limited.
 - Delivered means persisted by the peer, not read or heard.
-- SOS messages only reach the paired phone and do not contact emergency services.
+- Direct SOS reaches the paired phone; the separate public mesh SOS can relay.
+  Neither contacts emergency services automatically.
 - Android is implemented; no iOS radio/sensor target is included.
 
 Model and source licenses remain separate. NOTICE identifies the included runtime
 and model families whose own terms must be reviewed before distribution.
+
+## Stage 3 status
+
+Stage 3 adds short PUBLIC BLE mesh voice notes (3 seconds, model-free Original),
+optional source transcripts, receiver translation/TTS with explicit pack/language
+status, and consented expiring public GPS sharing. Radar dots and discovery rows
+use one filter; every self-declared role remains unverified. Direct original voice
+and RFCOMM/Wi-Fi Direct remain available.
+
+Automated protocol simulation is not hardware evidence. One A142 / Android 17 phone
+appeared at final validation; two-phone playback, three-phone radio relay, BLE capacity, location
+sensors and real model inference are NOT TESTED. No ONNX weights were installed in
+this workspace. Hindi speech is absent; general translation remains hi<->mr only.
+See MODEL_HOSTING.md for the evidence matrix and DEVICE_TESTS.md for test cards.
+Wi-Fi Aware/Nearby is deferred without measurements. Details and commits are in
+WORK_CHECKPOINT.md.

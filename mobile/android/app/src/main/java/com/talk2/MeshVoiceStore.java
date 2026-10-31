@@ -49,10 +49,11 @@ final class MeshVoiceStore {
  private void persist(JSONObject m)throws Exception{write(file(m.getString("transfer"),".json"),m.toString().getBytes("UTF-8"));}
  private long used(){long n=0;File[] fs=root.listFiles();if(fs!=null)for(File f:fs)n+=f.length();return n;}
  private long active(){return records.values().stream().filter(m->m.optString("state").equals("receiving")||m.optString("state").equals("queued")||m.optString("state").equals("transferring")||m.optString("state").equals("custody")).count();}
- synchronized String enqueue(byte[] pcm,String language,String transcript,long now)throws Exception{
+ synchronized String enqueue(byte[] pcm,String language,String transcript,long now)throws Exception{return enqueue(pcm,language,transcript,now,"");}
+ synchronized String enqueue(byte[] pcm,String language,String transcript,long now,String localUri)throws Exception{
   cleanup(now);if(active()>=MAX_ACTIVE||records.size()>=MAX_RECORDS||records.values().stream().filter(m->m.optBoolean("out")&&!terminal(m)).count()>=MAX_OUT)throw new IOException("Mesh voice queue full");
   String id=UUID.randomUUID().toString();JSONObject m=new JSONObject().put("v",1).put("op","meta").put("transfer",id).put("message",id).put("source",node).put("destination","*").put("format","pcm-s16le-16000-mono").put("bytes",pcm.length).put("count",(pcm.length+CHUNK-1)/CHUNK).put("sha256",VoiceTransfer.hash(pcm)).put("created",now).put("expires",now+TTL).put("language",language).put("transcript",transcript);
-  validate(m,node,now,true);write(file(id,".pcm"),pcm);m.put("out",true).put("state","queued").put("cursor",-1).put("round",0);persist(m);records.put(id,m);status(m,"queued");return id;
+  validate(m,node,now,true);write(file(id,".pcm"),pcm);m.put("audioUri",localUri).put("out",true).put("state","queued").put("cursor",-1).put("round",0);persist(m);records.put(id,m);status(m,"queued");return id;
  }
  private boolean terminal(JSONObject m){return Arrays.asList("delivered","expired","failed","cancelled","received").contains(m.optString("state"));}
  private JSONObject metadata(JSONObject m)throws Exception{JSONObject clean=new JSONObject();for(String key:new String[]{"v","op","transfer","message","source","destination","format","bytes","count","sha256","created","expires","language","transcript"})clean.put(key,m.get(key));return clean;}
@@ -71,7 +72,7 @@ final class MeshVoiceStore {
    }
    if(!transport.queue("*",body.toString(),0))return;
    cursor++;if(cursor>=m.getInt("count")){cursor=-1;m.put("round",round+1).put("next",now+30000);}
-   m.put("cursor",cursor);status(m,"transferring");persist(m);return; // one packet per tick, text/SOS get the remaining capacity
+   m.put("cursor",cursor);status(m,m.getString("state"));persist(m);return; // one packet per tick, text/SOS get the remaining capacity
   }
  }
  synchronized boolean acceptEnvelope(MeshPacket p,String ingress,long now)throws Exception {
@@ -106,7 +107,7 @@ final class MeshVoiceStore {
    if(m.optString("state").equals("received"))receipt(m);return true;
   }
   if(m==null)return false; // no allocation for chunks/cancellation without a validated manifest
-  if(op.equals("cancel")){if(!m.optString("state").equals("received")){status(m,"cancelled");persist(m);removePieces(m);}return true;}
+  if(op.equals("cancel")){status(m,"cancelled");persist(m);removePieces(m);return true;}
   if(!op.equals("chunk"))throw new IOException("Invalid voice operation");
   if(terminal(m)){if(m.optString("state").equals("received"))receipt(m);return true;}
   int seq=body.getInt("seq");String encoded=body.getString("data");
@@ -120,12 +121,14 @@ final class MeshVoiceStore {
   m.put("audioUri",sink.save(pcm)).put("state","received");persist(m);removePieces(m);completed(m);receipt(m);return true;
  }
  private byte[] read(File f,int length)throws Exception{if(f.length()!=length)throw new IOException("Incomplete voice piece");byte[] b=new byte[length];try(DataInputStream in=new DataInputStream(new FileInputStream(f))){in.readFully(b);}return b;}
- private void receipt(JSONObject m)throws Exception{transport.queue(m.getString("source"),new JSONObject().put("op","receipt").put("transfer",m.getString("transfer")).put("sha256",m.getString("sha256")).toString(),3);}
- synchronized void custody(String body)throws Exception{JSONObject b=new JSONObject(body),m=records.get(b.optString("transfer"));if(m!=null&&m.optBoolean("out")&&!terminal(m)){status(m,"custody");persist(m);}}
+ private void receipt(JSONObject m)throws Exception{long now=System.currentTimeMillis();if(now-m.optLong("receiptAt")<10000)return;if(transport.queue(m.getString("source"),new JSONObject().put("op","receipt").put("transfer",m.getString("transfer")).put("sha256",m.getString("sha256")).toString(),3)){m.put("receiptAt",now);persist(m);}}
+ synchronized void started(String body)throws Exception{JSONObject b=new JSONObject(body),m=records.get(b.optString("transfer"));if(m!=null&&m.optBoolean("out")&&m.optString("state").equals("queued")){status(m,"transferring");persist(m);}}
+ synchronized void custody(String body)throws Exception{JSONObject b=new JSONObject(body),m=records.get(b.optString("transfer"));if(m!=null&&m.optBoolean("out")&&!terminal(m)&&!m.optString("state").equals("custody")){status(m,"custody");persist(m);}}
  synchronized void cancel(String id)throws Exception{JSONObject m=records.get(id);if(m==null||!m.optBoolean("out"))throw new IOException("Unknown outgoing note");status(m,"cancelled");m.put("cancelPending",true);persist(m);removePieces(m);}
- private void status(JSONObject m,String state)throws Exception{m.put("state",state);sink.event("meshVoiceStatus",new JSONObject().put("id",m.getString("transfer")).put("status",state).put("recipient",m.optString("recipient")).put("sent",Math.max(0,m.optInt("cursor"))).put("total",m.getInt("count")));}
+ private void status(JSONObject m,String state)throws Exception{m.put("state",state);sink.event("meshVoiceStatus",new JSONObject().put("id",m.getString("transfer")).put("status",state).put("recipient",m.optString("recipient")).put("queuedPieces",Math.max(0,m.optInt("cursor"))).put("total",m.getInt("count")).put("bytes",m.getInt("bytes")));}
  private void completed(JSONObject m)throws Exception{sink.event("meshVoice",new JSONObject().put("id",m.getString("message")).put("audioUri",m.getString("audioUri")).put("language",m.getString("language")).put("transcript",m.optString("transcript")).put("created",m.getLong("created")).put("durationMs",m.getInt("bytes")/32).put("sender",m.getString("source")));}
- synchronized void replay()throws Exception{for(JSONObject m:records.values())if(m.optString("state").equals("received"))completed(m);else if(m.optBoolean("out"))status(m,m.getString("state"));}
+ static void clearDirectory(File root)throws IOException{File[] files=root.listFiles();if(files!=null)for(File file:files)if(!file.delete())throw new IOException("Voice cleanup failed");}
+ synchronized void replay()throws Exception{for(JSONObject m:records.values())if(m.optString("state").equals("received"))completed(m);else if(m.optBoolean("out")){sink.event("meshVoiceOutgoing",new JSONObject().put("id",m.getString("transfer")).put("audioUri",m.optString("audioUri")).put("language",m.getString("language")).put("transcript",m.optString("transcript")).put("created",m.getLong("created")).put("status",m.getString("state")).put("recipient",m.optString("recipient")));status(m,m.getString("state"));}}
  synchronized void cleanup(long now)throws Exception{for(JSONObject m:new ArrayList<>(records.values()))if(m.getLong("expires")<=now){if(!terminal(m))status(m,"expired");m.put("state","expired");removePieces(m);file(m.getString("transfer"),".json").delete();records.remove(m.getString("transfer"));}}
  private void removePieces(JSONObject m)throws Exception{String id=m.getString("transfer");File[] fs=root.listFiles();if(fs!=null)for(File f:fs)if(f.getName().startsWith(id+".")&&!f.getName().endsWith(".json")&&!(m.optString("state").equals("received")&&f.getName().endsWith(".wire")))if(!f.delete())throw new IOException("Voice cleanup failed");}
 }

@@ -60,3 +60,121 @@ adb logcat -s Talk2Native ReactNativeJS AndroidRuntime
 ```
 
 Attach the reproduction and relevant error. Do not include tokens or private messages.
+
+## Stage 3 physical voice/location cards (all NOT TESTED)
+
+Initial `adb devices -l` was empty; one A142 running Android 17 appeared during
+final validation. Multi-phone radio, playback and location cards remain NOT TESTED.
+There are no emulator results. JVM signed A-B-C simulation is protocol evidence only. Fill every
+field below from actual devices; do not replace blanks with estimated results.
+Use the standalone APK (bundled UI, no Metro); record its SHA-256 from the final
+WORK_CHECKPOINT.md plus installed package version/build commit. Preserve existing
+phone data if an APK signature mismatch prevents installation.
+
+| Evidence field | Phone A | Phone B | Phone C (relay test) |
+| --- | --- | --- | --- |
+| Model / serial / Android version / security patch | NOT TESTED | NOT TESTED | NOT TESTED |
+| APK path / SHA-256 / commit / package / version | NOT TESTED | NOT TESTED | NOT TESTED |
+| Bluetooth scan/connect/advertise, microphone, location permission grants | NOT TESTED | NOT TESTED | NOT TESTED |
+| Bluetooth / Wi-Fi / airplane mode / mobile data / internet state | NOT TESTED | NOT TESTED | NOT TESTED |
+| Foreground, battery optimization, distance/barriers, GPS accuracy | NOT TESTED | NOT TESTED | NOT TESTED |
+| UTC start/end, transfer ID, PCM bytes, note duration, receipt sender | NOT TESTED | NOT TESTED | NOT TESTED |
+| Queued / first transmit / custody / recipient receipt timestamps | NOT TESTED | NOT TESTED | NOT TESTED |
+| Original playback, transcript, translation/TTS results and latency | NOT TESTED | NOT TESTED | NOT TESTED |
+| Logs, screenshots and topology evidence paths | NOT TESTED | NOT TESTED | NOT TESTED |
+
+Capture before each card (replace SERIAL; run commands separately per phone):
+
+```powershell
+adb -s SERIAL shell getprop ro.product.model
+adb -s SERIAL shell getprop ro.build.version.release
+adb -s SERIAL shell getprop ro.build.version.security_patch
+adb -s SERIAL shell dumpsys package com.talk2
+adb -s SERIAL logcat -v threadtime Talk2Mesh:I Talk2Native:W '*:S' > phone-A-stage3.log
+```
+
+Talk2Mesh logs contain IDs/state/bytes/ingress/hop hints, not audio, transcript or
+GPS payload. Keep logs with the exact test timestamps. Use the UI history to verify
+original playback. A log of queue admission or custody is not recipient delivery.
+
+### Card 17: two-phone Original voice without models/internet
+
+1. Record model-pack status showing no installed packs. Disable cellular data and
+   internet Wi-Fi access; leave Bluetooth and required location services enabled.
+   Keep both standalone apps foreground. Start BLE mesh in Radar on A and B.
+2. Record direct BLE link identities and absence of paired direct mode. On A tap
+   Record public note, speak a harmless one-second phrase, and Finish. Play the
+   draft, then confirm Broadcast public voice. Repeat B to A. Try the 3-second cap.
+3. Capture transfer ID, exact logged PCM byte count (at most 96,000), sender queued/
+   transferring/custody and recipient delivered states, and B's completed-note
+   event. Play Original on B with no model download. Recipient delivered must
+   identify a recipient and must not mean every receiver/read/heard.
+4. During a note send a text and public SOS. Show SOS is admitted ahead of pending
+   bulk after the active packet; measure actual time. Do not infer latency from a
+   JVM priority test. Inspect Marathi labels for recording, consent, states and SOS.
+5. Pause/disconnect midway. Restart mesh and recover pieces or complete a later
+   automatic round; no incomplete audio must become playable. Cancel another note;
+   check incomplete pieces stop forwarding. Leave an incomplete note for its
+   30-minute expiry. Clear local history and confirm local spool cleanup.
+6. Separately pair Classic Bluetooth and Wi-Fi Direct, confirm matching pairing
+   codes, select Original, exchange/play a note up to 20 seconds offline. This is
+   the direct-mode regression, not evidence of BLE mesh.
+
+### Card 18: three-phone A-B-C voice relay
+
+1. Physically arrange/attenuate radios so A-B and B-C work but A-C cannot link.
+   Record barriers/distances and neighbor logs. With B off, prove A and C cannot
+   discover/exchange over the entire observation period; maintain that isolation
+   during the relay test. Do not merely turn off an A-C UI connection.
+2. Start B, record its two links, and send one-second then three-second public
+   notes from A. Keep B as a relay/public receiver. Verify C's own completed-note
+   event and Original playback. A's receipt from B alone does NOT pass this card.
+3. Correlate the same originating transfer ID/signature, ingress logs and increased
+   hop hint at C. Hops are mutable routing hints; the physical no-A-C setup and
+   logs are required topology evidence. Record total bytes, elapsed times and any
+   drops/whole-note retries. Do not claim range/throughput from estimates.
+4. Restart B midway, reconnect, and test cancellation, expiry and SOS preemption
+   again. Disconnect C, retain B's durable spool, reconnect C within expiry, and
+   test onward forwarding after B already saved the complete public note.
+5. Record failed steps as failures. If BLE capacity is inadequate, retain these
+   measurements for a later optional-transport decision; Stage 3 adds neither
+   Nearby nor Wi-Fi Aware and claims no tested high-bandwidth fallback.
+
+### Card 19: supported models and Marathi UI
+
+1. Install checksum-verified Marathi pack on A/B using the manifest. Record its
+   exact asset digests and runtime input/output signatures with inspect-models.py
+   when files are available. Turn internet off after installation.
+2. Keep UI language independently mr/en. Record Marathi, attach source transcript,
+   public-send, preserve source transcript and original audio on B. Set translation
+   target mr and TTS voice mr. Play Original, then source transcript via TTS.
+3. Remove B's speech pack: Original and transcript must remain usable; TTS must
+   report missing target pack. Select a different TTS language: report mismatch,
+   never synthesize the translation with the wrong voice. Test unsupported en->mr.
+4. Separately install shared translation plus mr voice and exercise hi TEXT -> mr
+   translation/TTS. This does not test Hindi STT. Hindi speech remains BLOCKED by
+   absent release files; no Hindi voice-to-voice acceptance claim is permitted.
+5. Check Marathi consent, voice states, radar/list/filter, discovery, SOS feedback
+   and settings. Other offered UI languages should fall back to English and expose
+   coverage diagnostics. Record any missing strings rather than claiming visual QA.
+
+### Card 20: location consent, expiry and shared filters
+
+1. Verify public mesh sharing starts off each session. Grant explicit consent on A;
+   B sees approximate distance/uncertainty from fresh coordinates. Inspect both
+   phones outdoors; record fix age, accuracy and compass accuracy.
+2. Stop sharing; B removes the dot but retains the discoverable row. Drop the stop
+   packet by disabling a link and verify coordinates expire within 30 seconds.
+   Replayed older positions must not resurrect a dot after a newer stop.
+3. Select All/Direct/Relayed and verify the same collection feeds radar and list.
+   No coordinate means list only. No RSSI-only direction/distance is allowed.
+   Staff self-selection, unsigned profile and fake verified flags remain Unverified.
+4. Test compass absent/unreliable/stale, poor GPS (>100 m accuracy), indoor fixes,
+   antimeridian math (automated), and background/restart. North-up fallback must be
+   labelled; role colors must not imply responder verification.
+
+Final single-phone attempt: A142 / Android 17 appeared at closeout. Updating the
+standalone APK failed with INSTALL_FAILED_UPDATE_INCOMPATIBLE because the installed
+com.talk2 has a different signer. Existing installation/data were preserved; the
+new build was not launched. This is not a passed physical acceptance card. Use a
+matching signing key or a separate test device; full command/hash is in WORK_CHECKPOINT.md.

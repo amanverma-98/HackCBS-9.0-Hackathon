@@ -3,8 +3,8 @@ import { AppState, Alert, Button, Text, View } from "react-native";
 import { Native, permissions } from "./native";
 const i18n = require("../../shared/i18n.cjs");
 
-export function MeshVoicePanel({ active, source, ui, installed, available, onSent }: {
-  active: boolean; source: string; ui: string; installed: Record<string, boolean>; available: Record<string, any>;
+export function MeshVoicePanel({ color, active, source, ui, installed, available, onSent }: {
+  color: string; active: boolean; source: string; ui: string; installed: Record<string, boolean>; available: Record<string, any>;
   onSent: (id: string, uri: string, language: string, transcript: string) => Promise<void>;
 }) {
   const t = (s: string) => i18n.translate(s, ui);
@@ -36,8 +36,8 @@ export function MeshVoicePanel({ active, source, ui, installed, available, onSen
     } catch (e: any) { setError(e.message); } finally { setBusy(false); }
   };
   return <View style={{ gap: 10, paddingVertical: 12 }}>
-    <Text>{t("Public mesh voice · maximum 3 seconds")}</Text>
-    <Text>{t("Audio and transcripts are public. Every receiving phone and relay can read them. Use paired direct mode for private voice.")}</Text>
+    <Text style={{color}}>{t("Public mesh voice · maximum 3 seconds")}</Text>
+    <Text style={{color}}>{t("Audio and transcripts are public. Every receiving phone and relay can read them. Use paired direct mode for private voice.")}</Text>
     <Button title={t(recording ? "Finish public recording" : "Record public note")} disabled={busy || !active} onPress={recording ? stop : record} />
     {!!draft && <>
       <Button title={t("Play original draft")} onPress={() => Native.playVoice(draft).catch((e: any) => setError(e.message))} />
@@ -47,7 +47,7 @@ export function MeshVoicePanel({ active, source, ui, installed, available, onSen
           setTranscript(text);
         } catch (e: any) { setError(e.message); } finally { setBusy(false); }
       }} />
-      <Text>{language}{transcript ? `: ${transcript}` : ""}</Text>
+      <Text style={{color}}>{language}{transcript ? `: ${transcript}` : ""}</Text>
       <Button title={t("Broadcast public voice")} disabled={busy || !active} onPress={() => Alert.alert(
         t("Broadcast public voice?"), t("Nearby phones and relays can listen. This audio is not private."), [
           { text: t("Cancel"), style: "cancel" },
@@ -59,6 +59,6 @@ export function MeshVoicePanel({ active, source, ui, installed, available, onSen
         ],
       )} />
     </>}
-    {!!error && <Text accessibilityRole="alert">{t(error)}</Text>}
+    {!!error && <Text style={{color}} accessibilityRole="alert">{t(error)}</Text>}
   </View>;
 }

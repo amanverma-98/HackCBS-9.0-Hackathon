@@ -25,3 +25,11 @@ android {
 }
 dependencies { implementation('com.facebook.react:react-android'); implementation('com.facebook.react:hermes-android'); implementation('com.microsoft.onnxruntime:onnxruntime-android:1.20.0') }
 
+// Metro imports the workspace's shared modules outside the mobile source root.
+// Track them so standalone APKs never retain stale localization or policy code.
+tasks.configureEach { task ->
+ if (task.name.startsWith('createBundle') && task.name.endsWith('JsAndAssets')) {
+  task.inputs.dir(file('../../../shared'))
+ }
+}
+

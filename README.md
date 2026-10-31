@@ -102,3 +102,26 @@ build output out of git.
 Read [STATUS.md](docs/STATUS.md) and [BUILD_RESULT.md](docs/BUILD_RESULT.md) before
 deployment. Physical two-phone testing is still required. Model licenses are
 separate from the Talk2 source license; see NOTICE.
+
+## Stage 3: public mesh voice prototype
+
+Radar now offers an explicitly public, three-second BLE voice broadcast. Record,
+play the local draft, optionally attach a source transcript, then confirm broadcast.
+Original audio needs no model or internet. Relay phones can read/listen to this
+public audio; use paired direct mode for private voice. History distinguishes
+queued, transferring, relay custody and receipt by at least one recipient, with
+cancel/expiry/failure states. A receipt is not proof every phone received or played it.
+
+Recipients retain the Original alongside optional transcript translation and TTS.
+Hindi speech files are still missing; general translation supports only Hindi and
+Marathi. Actual model/physical validation is listed in
+[MODEL_HOSTING.md](docs/MODEL_HOSTING.md). No real voice-model demo is claimed here.
+
+Public location sharing is a separate opt-in with a stop control and 30-second
+coordinate expiry. Radar and discovery use the same filter, and roles remain
+unverified. No optional high-bandwidth route was added without phone measurements.
+Use an `assembleStandalone` APK for offline testing; the development debug build
+uses Metro. Device cards are in [DEVICE_TESTS.md](docs/DEVICE_TESTS.md), and the
+resume point is [WORK_CHECKPOINT.md](docs/WORK_CHECKPOINT.md). Physical Stage 3
+radio/playback tests remain NOT TESTED. One A142 phone appeared during final
+validation; this does not supply a two- or three-phone test topology.

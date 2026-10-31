@@ -9,9 +9,9 @@ public final class MeshVoiceStoreTest {
  interface Work {void run()throws Exception;}
  static void rejects(Work w)throws Exception{try{w.run();throw new AssertionError("Expected rejection");}catch(java.io.IOException|SecurityException|IllegalArgumentException expected){}}
  static final class Target implements MeshVoiceStore.Sink {
-  byte[] audio;int completed;String state="";
+  byte[] audio;int completed;String state="";JSONObject restored;
   public String save(byte[] pcm){audio=pcm;return "file:///test.pcm";}
-  public void event(String type,JSONObject data){if(type.equals("meshVoice"))completed++;else state=data.optString("status");}
+  public void event(String type,JSONObject data){if(type.equals("meshVoice"))completed++;else if(type.equals("meshVoiceOutgoing"))restored=data;else state=data.optString("status");}
  }
  public static void main(String[] args)throws Exception{
   long now=System.currentTimeMillis();String a=UUID.randomUUID().toString(),b=UUID.randomUUID().toString();
@@ -56,6 +56,25 @@ public final class MeshVoiceStoreTest {
   check(relayWire.size()==14,"durable relay spool survives receipt at intermediate node");
   for(String wire:relayWire){MeshPacket p=MeshPacket.parse(wire);check(p.sender().equals(origin)&&p.json.getInt("hops")==1,"origin signature preserved through relay");far.acceptEnvelope(p,"B-link",now);}
   check(farSink.completed==1&&Arrays.equals(pcm,farSink.audio),"simulated A-B-C reassembles exactly, no A-C delivery");
+  Target retrySink=new Target();List<String> attempts=new ArrayList<>();
+  MeshVoiceStore retryStore=new MeshVoiceStore(Files.createTempDirectory("mesh-retries").toFile(),a,(d,body,p)->{attempts.add(body);return true;},retrySink);
+  retryStore.enqueue(pcm,"en","",now);for(int i=0;i<45;i++)retryStore.pump(now+i*31000L);
+  check(attempts.size()==42&&retrySink.state.equals("failed"),"three bounded rounds then failed without receipt");
+  File capacityRoot=Files.createTempDirectory("mesh-capacity").toFile();Target capacitySink=new Target();
+  MeshVoiceStore limited=new MeshVoiceStore(capacityRoot,a,(d,body,p)->false,capacitySink);
+  String limitId=limited.enqueue(new byte[MeshVoiceStore.MAX_BYTES],"en","",now);limited.pump(now);check(capacitySink.state.equals("queued"),"backpressure stays queued, not transferring");
+  limited.enqueue(pcm,"en","",now);rejects(()->limited.enqueue(pcm,"en","",now));
+  rejects(()->MeshVoiceStore.validate(new JSONObject(meta.toString()).put("bytes",96002),a,now,true));
+  try(java.io.RandomAccessFile fill=new java.io.RandomAccessFile(new File(capacityRoot,"filler"),"rw")){fill.setLength(MeshVoiceStore.MAX_DISK);}
+  rejects(()->limited.cancel(limitId)); // bounded disk writes fail before increasing usage
+  rejects(()->limited.cancel("not-an-id")); // unknown transfer does not touch paths
+  MeshVoiceStore.clearDirectory(capacityRoot);check(capacityRoot.listFiles().length==0,"explicit history cleanup removes spool");
+  File restoreRoot=Files.createTempDirectory("mesh-outgoing-restart").toFile();Target restoreSink=new Target();List<String> publicBodies=new ArrayList<>();
+  MeshVoiceStore restartSource=new MeshVoiceStore(restoreRoot,a,(d,body,p)->{publicBodies.add(body);return true;},restoreSink);
+  restartSource.enqueue(pcm,"en","source",now,"file:///private-original.pcm");restartSource.pump(now);
+  check(!publicBodies.get(0).contains("private-original"),"local file URI never travels in metadata");
+  restartSource=new MeshVoiceStore(restoreRoot,a,(d,body,p)->true,restoreSink);restartSource.replay();
+  check(restoreSink.restored!=null&&restoreSink.restored.getString("audioUri").equals("file:///private-original.pcm"),"restart restores outgoing history from durable metadata");
   System.out.println("MeshVoiceStoreTest PASS: bounds, reassembly, restart, duplicate, missing, hash, expiry, cancellation, receipts, SOS priority, signed A-B-C protocol simulation");
  }
 }
