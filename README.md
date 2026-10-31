@@ -3,9 +3,30 @@
 This is the README for hackcbs hackathon.
 
 # Talk2
+## Resilient Communication for Emergency Response
+An offline-first, peer-to-peer emergency communication platform designed to help rescue teams communicate, share critical information and coordinate during disaster situations — even when conventional cellular infrastructure is unavailable.
 
-Talk2 is an Android peer-to-peer communication app with a React Native interface,
-Java device integrations, and an optional Node.js assistant backend.
+## The Problem
+
+During natural disasters and large-scale emergencies, conventional communication infrastructure can become unreliable or unavailable. Cellular network disruptions, damaged infrastructure and limited connectivity can make coordination between rescue teams increasingly difficult.
+
+In these situations, responders need more than a messaging application. They need a way to communicate, exchange critical information, identify nearby teams and coordinate field operations despite connectivity constraints.
+
+## Our Solution
+
+Talk2 explores a decentralized, offline-first approach to emergency communication using peer-to-peer connectivity technologies.
+
+By combining Bluetooth Classic, Wi-Fi Direct, experimental BLE mesh communication, local speech processing and location-aware features, Talk2 aims to provide a communication layer for field responders when conventional networks are unavailable.
+
+The platform is designed around four core capabilities:
+
+Communicate: Exchange text and voice messages between nearby teams.
+
+Alert: Share SOS signals, medical alerts and emergency broadcasts.
+
+Locate: Discover nearby responders and share GPS coordinates with explicit consent.
+
+Coordinate: Support team awareness and incident coordination through Commander Mode.
 
 ## Features
 
