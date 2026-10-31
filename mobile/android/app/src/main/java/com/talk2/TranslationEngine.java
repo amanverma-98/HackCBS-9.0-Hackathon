@@ -7,6 +7,18 @@ import java.io.*;
 /** Dual-vocabulary IndicTrans2. Script-safe pairs are gated until preprocessing is validated. */
 public final class TranslationEngine {
  private final ModelStore store;TranslationEngine(ModelStore s){store=s;}
+ /** Encoder, decoder and tokenizers stay loaded between messages; reloading them took seconds per call. */
+ private Tokenizer src,tgt;private OrtSession enc,dec;private String loadedKey;
+ private void load()throws Exception{
+  File e=store.file("translation","indictrans2-encoder-int8.onnx"),d=store.file("translation","indictrans2-decoder-int8.onnx"),v=store.file("translation","indictrans2-vocab.json");
+  String key=e.length()+":"+e.lastModified()+":"+d.length()+":"+d.lastModified()+":"+v.length()+":"+v.lastModified();if(key.equals(loadedKey))return;release();
+  JSONObject root=new JSONObject(ModelStore.read(v));src=new Tokenizer(root,"src");tgt=new Tokenizer(root,"tgt");OrtEnvironment env=OrtEnvironment.getEnvironment();
+  try(OrtSession.SessionOptions opts=new OrtSession.SessionOptions()){opts.setIntraOpNumThreads(Math.max(2,Math.min(4,Runtime.getRuntime().availableProcessors()/2)));opts.setInterOpNumThreads(1);enc=env.createSession(e.getAbsolutePath(),opts);dec=env.createSession(d.getAbsolutePath(),opts);}
+  loadedKey=key;
+ }
+ synchronized void release(){for(OrtSession x:new OrtSession[]{enc,dec})if(x!=null)try{x.close();}catch(Exception ignored){}enc=dec=null;src=tgt=null;loadedKey=null;}
+ /** Loads the models ahead of the first message so the receiver does not wait for it. */
+ synchronized boolean warm()throws Exception{if(!store.readyCached("translation"))return false;load();return true;}
  static final class Tokenizer{
   final JSONObject vocab,special,tags;final Map<String,Integer> ranks=new HashMap<>();final Map<Integer,String> reverse=new HashMap<>();
   Tokenizer(JSONObject root,String side)throws Exception{JSONObject o=root.getJSONObject(side);vocab=o.getJSONObject("vocab");special=o.getJSONObject("special_tokens");tags=o.getJSONObject("lang_tags");JSONArray merges=root.getJSONArray("merges");for(int i=0;i<merges.length();i++)ranks.put(merges.getString(i),i);for(JSONObject obj:new JSONObject[]{vocab,special,tags}){Iterator<String> keys=obj.keys();while(keys.hasNext()){String k=keys.next();reverse.put(obj.getInt(k),k);}}}
@@ -15,12 +27,11 @@ public final class TranslationEngine {
  synchronized String translate(String text,String source,String target)throws Exception{
   if(source.equals(target))return text;
   if(!(source.equals("hi")&&target.equals("mr")||source.equals("mr")&&target.equals("hi")))throw new IOException("General offline translation for this pair is not validated. Original text is preserved. Quick alerts work across all ten languages.");
-  if(!store.ready("translation"))throw new IOException("Download the shared translation pack first");
-  JSONObject root=new JSONObject(ModelStore.read(store.file("translation","indictrans2-vocab.json")));Tokenizer src=new Tokenizer(root,"src"),tgt=new Tokenizer(root,"tgt");List<Long> tokens=new ArrayList<>();tokens.add(src.tags.getLong(source.equals("hi")?"hin_Deva":"mar_Deva"));tokens.add(src.tags.getLong(target.equals("hi")?"hin_Deva":"mar_Deva"));tokens.addAll(src.encode(text));tokens.add(src.special.getLong("</s>"));if(tokens.size()>256)throw new IOException("Translation input too long");
+  if(!store.readyCached("translation"))throw new IOException("Download the shared translation pack first");
+  load();List<Long> tokens=new ArrayList<>();tokens.add(src.tags.getLong(source.equals("hi")?"hin_Deva":"mar_Deva"));tokens.add(src.tags.getLong(target.equals("hi")?"hin_Deva":"mar_Deva"));tokens.addAll(src.encode(text));tokens.add(src.special.getLong("</s>"));if(tokens.size()>256)throw new IOException("Translation input too long");
   long[] ids=tokens.stream().mapToLong(Long::longValue).toArray(),mask=new long[ids.length];Arrays.fill(mask,1);OrtEnvironment env=OrtEnvironment.getEnvironment();
-  try(OrtSession.SessionOptions opts=new OrtSession.SessionOptions()){
-   opts.setIntraOpNumThreads(2);opts.setInterOpNumThreads(1);
-   try(OrtSession enc=env.createSession(store.file("translation","indictrans2-encoder-int8.onnx").getAbsolutePath(),opts);OrtSession dec=env.createSession(store.file("translation","indictrans2-decoder-int8.onnx").getAbsolutePath(),opts);OnnxTensor input=OnnxTensor.createTensor(env,LongBuffer.wrap(ids),new long[]{1,ids.length});OnnxTensor att=OnnxTensor.createTensor(env,LongBuffer.wrap(mask),new long[]{1,ids.length})){
+  {
+   try(OnnxTensor input=OnnxTensor.createTensor(env,LongBuffer.wrap(ids),new long[]{1,ids.length});OnnxTensor att=OnnxTensor.createTensor(env,LongBuffer.wrap(mask),new long[]{1,ids.length})){
     Map<String,OnnxTensor> feeds=new HashMap<>();feeds.put("input_ids",input);feeds.put("attention_mask",att);
     try(OrtSession.Result encoded=enc.run(feeds)){
      OnnxTensor hidden=(OnnxTensor)encoded.get(0);List<Long> generated=new ArrayList<>();long eos=tgt.special.getLong("</s>"),pad=tgt.special.getLong("<pad>");generated.add(eos);StringBuilder result=new StringBuilder();boolean ended=false;

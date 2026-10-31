@@ -8,6 +8,8 @@ import java.util.*;
 public final class ModelStore {
  interface Progress{void update(String pack,String file,long done,long total);}
  final File root;private volatile boolean cancelled;
+ /** Pack name -> file fingerprint that last passed full verification (see readyCached). */
+ private final Map<String,String> verified=new java.util.concurrent.ConcurrentHashMap<>();
  ModelStore(Context c){root=new File(c.getFilesDir(),"packs");root.mkdirs();}
  static String safe(String s){if(!s.matches("[a-zA-Z0-9_.-]+")||s.contains(".."))throw new IllegalArgumentException("Unsafe filename");return s;}
  File file(String pack,String name){return new File(new File(root,safe(pack)),safe(name));}
@@ -22,7 +24,7 @@ public final class ModelStore {
   if(!required.isEmpty())throw new IOException("Missing pack files");return files;
  }
  synchronized void install(String pack,JSONObject manifest,Progress progress)throws Exception{
-  cancelled=false;JSONObject spec=manifest.getJSONObject("packs").getJSONObject(pack);JSONArray files=validateSpec(pack,spec);
+  cancelled=false;verified.remove(pack);JSONObject spec=manifest.getJSONObject("packs").getJSONObject(pack);JSONArray files=validateSpec(pack,spec);
   File dir=new File(root,safe(pack));dir.mkdirs();new File(dir,"ready.json").delete();
   for(int i=0;i<files.length();i++){
    JSONObject f=files.getJSONObject(i);String name=safe(f.getString("name")),sha=f.getString("sha256");long expected=f.getLong("bytes");if(!sha.matches("[a-f0-9]{64}")||expected<=0)throw new IOException("Missing checksum or exact file size");
@@ -45,7 +47,16 @@ public final class ModelStore {
   File temp=new File(dir,"ready.json.tmp");try(FileOutputStream out=new FileOutputStream(temp)){out.write(spec.toString().getBytes("UTF-8"));out.getFD().sync();}if(!temp.renameTo(new File(dir,"ready.json")))throw new IOException("Cannot commit pack");
  }
  boolean ready(String pack)throws Exception{File m=file(pack,"ready.json");if(!m.exists())return false;JSONArray fs=validateSpec(pack,new JSONObject(read(m)));for(int i=0;i<fs.length();i++){JSONObject f=fs.getJSONObject(i);File v=file(pack,f.getString("name"));if(!v.exists()||v.length()!=f.getLong("bytes")||!hash(v).equals(f.getString("sha256")))return false;}return true;}
+ /**
+  * ready() re-hashes every file (hundreds of MB). Inference calls use this instead: a full
+  * verification is reused until any file's name, size or timestamp changes.
+  */
+ boolean readyCached(String pack)throws Exception{
+  if(!file(pack,"ready.json").exists()){verified.remove(pack);return false;}
+  StringBuilder print=new StringBuilder();File[] files=new File(root,safe(pack)).listFiles();if(files!=null){Arrays.sort(files);for(File f:files)print.append(f.getName()).append(':').append(f.length()).append(':').append(f.lastModified()).append(';');}
+  String key=print.toString();if(key.equals(verified.get(pack)))return true;boolean ok=ready(pack);if(ok)verified.put(pack,key);else verified.remove(pack);return ok;
+ }
  long partialBytes(String pack,JSONObject spec)throws Exception{if(spec==null)return 0;JSONArray fs=validateSpec(pack,spec);long total=0;for(int i=0;i<fs.length();i++){JSONObject entry=fs.getJSONObject(i);String name=safe(entry.getString("name"));long expected=entry.getLong("bytes");File complete=file(pack,name),part=file(pack,name+".part");if(complete.exists()&&complete.length()==expected)total+=expected;else if(part.exists())total+=Math.min(part.length(),expected);}return total;}
- void remove(String pack)throws Exception{File d=new File(root,safe(pack));File[] files=d.listFiles();if(files!=null)for(File f:files)if(!f.delete())throw new IOException("Cannot remove "+f.getName());d.delete();}
+ void remove(String pack)throws Exception{verified.remove(pack);File d=new File(root,safe(pack));File[] files=d.listFiles();if(files!=null)for(File f:files)if(!f.delete())throw new IOException("Cannot remove "+f.getName());d.delete();}
  static String read(File f)throws Exception{try(InputStream i=new FileInputStream(f);ByteArrayOutputStream o=new ByteArrayOutputStream()){byte[] b=new byte[8192];int n;while((n=i.read(b))!=-1)o.write(b,0,n);return o.toString("UTF-8");}}
 }

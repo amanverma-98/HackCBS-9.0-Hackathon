@@ -18,3 +18,5 @@ javac -encoding UTF-8 -cp "$talk2_test_dir/classes:$talk2_test_dir/json.jar" -d 
 java -cp "$talk2_test_dir/classes:$talk2_test_dir/json.jar" com.talk2.MeshVoiceStoreTest
 javac -encoding UTF-8 -cp "$talk2_test_dir/classes:$talk2_test_dir/json.jar" -d "$talk2_test_dir/classes" tests/stubs/android/security/keystore/KeyProperties.java tests/stubs/android/security/keystore/KeyGenParameterSpec.java mobile/android/app/src/main/java/com/talk2/MeshRouter.java tests/MeshRouterTest.java
 java -cp "$talk2_test_dir/classes:$talk2_test_dir/json.jar" com.talk2.MeshRouterTest
+javac -encoding UTF-8 -cp "$talk2_test_dir/classes:$talk2_test_dir/json.jar" -d "$talk2_test_dir/classes" mobile/android/app/src/main/java/com/talk2/MeshSeal.java tests/MeshSealTest.java
+java -cp "$talk2_test_dir/classes:$talk2_test_dir/json.jar" com.talk2.MeshSealTest
