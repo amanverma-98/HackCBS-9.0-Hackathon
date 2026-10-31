@@ -448,3 +448,10 @@ Mesh remains foreground-only; the 3-second public note limit is conservative and
 not a measured delivery guarantee. The user's Gradle wrapper edit is preserved;
 use the explicit 8.13 binary above until its version/checksum mismatch is resolved.
 Stage 3 stops here; no dashboard, live call, Meshtastic or Next.js backend begun.
+
+Final implementation commit: 9a965d7e6234698551c21e9ae66bc22df27692cd on main.
+This following documentation-only checkpoint commit records that immutable source
+hash; APKs above were built from that source before commit creation. No GitHub
+push was performed for Stage 3. Final status preserves the pre-existing modified
+mobile/android/gradle/wrapper/gradle-wrapper.properties. An untracked .vscode/
+directory appeared during closeout and was also left untouched/uncommitted.
