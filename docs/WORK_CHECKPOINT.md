@@ -23,7 +23,8 @@ the completed implementation.
 ## Stage 1 checkpoint
 
 Input commit: 6ca408d0e7d41dd580f5fd6a42f9d885e46ae584 on feature/offline-mesh.
-Stage 1 implementation commit: pending creation after final verification.
+Stage 1 implementation commit: 882f24c44c49a8a698bffac3f4dae530fddd2e15
+on feature/offline-mesh.
 
 Implemented:
 
@@ -96,8 +97,6 @@ Unresolved:
   Hindi↔Marathi. Other UI languages use English fallback and are not localized.
 - Device persistence/restart, radio continuity, microphone/voice, model downloads
   and actual on-screen Marathi rendering still need physical-device acceptance.
-- Final Stage 1 commit hash is added below after commit creation.
-
 Stage 2 entry point: reread this checkpoint and the Stage 2 section plus “Copy into
 VS Code Codex: prompt 2” in Talk2-staged-Codex-plan.md. Start with bounded BLE
 transport/mesh design while retaining the currently working direct RFCOMM/Wi-Fi
