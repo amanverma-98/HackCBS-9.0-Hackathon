@@ -44,6 +44,20 @@ Talk2 Dev, so it can coexist with the standalone app and avoid signing conflicts
 Its state and downloaded packs are separate. Reinstall after Java/Gradle changes;
 JavaScript and TypeScript use Fast Refresh.
 
+## Built-in Hindi and Gujarati voices
+
+The APK bundles two TTS voices in `mobile/android/app/src/main/assets/voices/`, so
+playback in Hindi and Gujarati needs no download. The vocab JSON files are committed;
+the two 37 MB `.onnx` files are gitignored. Without them the build still succeeds and
+those voices fall back to the downloadable speech packs.
+
+- `vits-gu-int8.onnx`: download from the `model-pack-v1` release URL in
+  `model-host/upstream-manifest.json` and check its SHA-256 there.
+- `vits-hi-int8.onnx`: not in any release. Export it from `facebook/mms-tts-hin`
+  (CC-BY-NC 4.0, like the other MMS voices) with
+  `TALK2_MODEL_OUTPUT=out python scripts/export_tts_models.py hi`
+  (needs `torch`, `transformers<5`, `onnx`, `onnxruntime`), then copy the `.onnx` file.
+
 ## Standalone test APK
 
 The `standalone` build type is release-like with a JS bundle and Android's debug signing key. It is for local testing and must not be uploaded to Play as your production signing identity.

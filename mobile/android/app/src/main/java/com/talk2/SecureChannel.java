@@ -9,7 +9,7 @@ import java.util.*;
 /** P-256 ECDH, HKDF-SHA256, directional AES-256-GCM, operator-confirmed SAS. */
 public final class SecureChannel {
  private final KeyPair pair;
- private byte[] sendKey,receiveKey,transcript;
+ private byte[] sendKey,receiveKey,transcript,resume;private boolean low;
  private final byte[] prefix=new byte[4];
  private byte[] remotePrefix;
  private long sent=0,received=-1;
@@ -22,12 +22,23 @@ public final class SecureChannel {
  public String accept(byte[] peer)throws Exception{
   if(peer.length>256||Arrays.equals(peer,publicKey()))throw new GeneralSecurityException("Invalid peer key");
   KeyAgreement agreement=KeyAgreement.getInstance("ECDH");agreement.init(pair.getPrivate());agreement.doPhase(KeyFactory.getInstance("EC").generatePublic(new X509EncodedKeySpec(peer)),true);
-  boolean low=compare(publicKey(),peer)<0;MessageDigest md=MessageDigest.getInstance("SHA-256");md.update(low?publicKey():peer);transcript=md.digest(low?peer:publicKey());
+  low=compare(publicKey(),peer)<0;MessageDigest md=MessageDigest.getInstance("SHA-256");md.update(low?publicKey():peer);transcript=md.digest(low?peer:publicKey());
   Mac m=Mac.getInstance("HmacSHA256");m.init(new SecretKeySpec(transcript,"HmacSHA256"));byte[] prk=m.doFinal(agreement.generateSecret());
-  byte[] a=expand(prk,"Talk2-v1-low-to-high"),b=expand(prk,"Talk2-v1-high-to-low");sendKey=low?a:b;receiveKey=low?b:a;
+  byte[] a=expand(prk,"Talk2-v1-low-to-high"),b=expand(prk,"Talk2-v1-high-to-low");sendKey=low?a:b;receiveKey=low?b:a;resume=expand(prk,"Talk2-v1-resume");
   md.update(expand(prk,"Talk2-v1-sas"));byte[] sas=md.digest(transcript);
   return String.format(Locale.ROOT,"%06d",(ByteBuffer.wrap(sas).getInt()&0x7fffffff)%1000000);
  }
+ /** Secret both sides share after a session; kept only once the operators confirmed its SAS. */
+ public byte[] resumeSecret(){return resume.clone();}
+ /**
+  * Proves possession of an earlier confirmed session's secret, bound to this session's transcript.
+  * Each side labels its proof with its own key order, so a peer cannot echo ours back.
+  */
+ public String resumeProof(byte[] secret,boolean mine)throws Exception{
+  Mac m=Mac.getInstance("HmacSHA256");m.init(new SecretKeySpec(secret,"HmacSHA256"));m.update((mine==low?"low":"high").getBytes(StandardCharsets.UTF_8));
+  StringBuilder hex=new StringBuilder();for(byte b:m.doFinal(transcript))hex.append(String.format("%02x",b&255));return hex.toString();
+ }
+ public boolean checkResume(byte[] secret,String proof)throws Exception{return MessageDigest.isEqual(resumeProof(secret,false).getBytes(StandardCharsets.UTF_8),proof.getBytes(StandardCharsets.UTF_8));}
  public synchronized byte[] encrypt(byte[] plain)throws Exception{
   if(sendKey==null||plain.length>32768||sent==Long.MAX_VALUE)throw new GeneralSecurityException("Invalid frame");
   byte[] nonce=ByteBuffer.allocate(12).put(prefix).putLong(sent++).array();Cipher c=Cipher.getInstance("AES/GCM/NoPadding");c.init(Cipher.ENCRYPT_MODE,new SecretKeySpec(sendKey,"AES"),new GCMParameterSpec(128,nonce));c.updateAAD(transcript);

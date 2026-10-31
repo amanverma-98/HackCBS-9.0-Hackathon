@@ -193,3 +193,6 @@ temp/
 /mobile/.gradle-stage2/
 /mobile/.gradle-stage2-final/
 /mobile/android/.gradle-stage2/
+
+# Built-in TTS voices are large binaries; see docs/BUILD.md to regenerate them.
+mobile/android/app/src/main/assets/voices/*.onnx

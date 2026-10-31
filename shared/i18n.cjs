@@ -158,28 +158,43 @@ Object.assign(mr, more);
 const stage3 = require("./stage3-ui.cjs");
 Object.assign(en, Object.fromEntries(Object.keys(stage3).map(key => [key, key])));
 Object.assign(mr, stage3);
-const resources = { en, mr };
+const indic = require("./i18n-indic.cjs");
+const hi = {}, gu = {};
+for (const [key, [hindi, gujarati]] of Object.entries(indic.BOTH)) { hi[key] = hindi; gu[key] = gujarati; }
+for (const [key, [marathi, hindi, gujarati]] of Object.entries(indic.ADDED)) { en[key] = key; mr[key] = marathi; hi[key] = hindi; gu[key] = gujarati; }
+Object.assign(mr, indic.MARATHI_FIXES);
+const resources = { en, mr, hi, gu };
 let locale = "en";
 function setLocale(value) { locale = value || "en"; }
 function coverageText(language) {
   const d = diagnostics(language);
-  const template = language === "mr"
-    ? "UI भाषांतर व्याप्ती: {translated}/{total} मजकूर. उर्वरित इंग्रजीत दाखवले जातील."
-    : "UI translation coverage: {translated}/{total} strings. Missing strings fall back to English.";
+  const templates = {
+    mr: "UI भाषांतर व्याप्ती: {translated}/{total} मजकूर. उर्वरित इंग्रजीत दाखवले जातील.",
+    hi: "UI अनुवाद कवरेज: {translated}/{total} पाठ। बाकी अंग्रेज़ी में दिखेंगे।",
+    gu: "UI અનુવાદ વ્યાપ: {translated}/{total} લખાણ. બાકીનું અંગ્રેજીમાં દેખાશે.",
+  };
+  const template = templates[language] || "UI translation coverage: {translated}/{total} strings. Missing strings fall back to English.";
   return template.replace("{translated}", String(d.translated)).replace("{total}", String(d.total));
 }
+/** Bytes as megabytes with one decimal, e.g. 377.3. */
+function mb(bytes) { return (Number(bytes || 0) / 1048576).toFixed(1); }
 function packProgressLabel(pack, done, total, language) {
-  const values = [Number(done || 0).toLocaleString(), Number(total || 0).toLocaleString()];
-  return language === "mr"
-    ? `${pack} पॅक: ${values[0]} पैकी ${values[1]} बाइट्स प्राप्त`
-    : `${pack} pack: ${values[0]} of ${values[1]} bytes received`;
+  const [got, all] = [mb(done), mb(total)];
+  if (language === "mr") return `${pack}: ${all} पैकी ${got} MB डाउनलोड झाले`;
+  if (language === "hi") return `${pack}: ${all} में से ${got} MB डाउनलोड हुआ`;
+  if (language === "gu") return `${pack}: ${all} માંથી ${got} MB ડાઉનલોડ થયું`;
+  return `${pack}: ${got} of ${all} MB downloaded`;
 }
 function translate(value, language = locale) {
   if (typeof value !== "string") return value;
   const missingSpeech = value.match(/^Install ([a-z]{2}) speech pack first$/);
   if (missingSpeech && language === "mr") return `${missingSpeech[1]} स्पीच पॅक प्रथम स्थापित करा`;
+  if (missingSpeech && language === "hi") return `पहले ${missingSpeech[1]} भाषा पैक इंस्टॉल करें`;
+  if (missingSpeech && language === "gu") return `પહેલાં ${missingSpeech[1]} ભાષા પૅક ઇન્સ્ટોલ કરો`;
   const welcome = value.match(/^WELCOME TO TALK2 · (\d) OF 3$/);
   if (welcome && language === "mr") return `TALK2 मध्ये आपले स्वागत आहे · ${welcome[1]}/3`;
+  if (welcome && language === "hi") return `TALK2 में आपका स्वागत है · ${welcome[1]}/3`;
+  if (welcome && language === "gu") return `TALK2 માં આપનું સ્વાગત છે · ${welcome[1]}/3`;
   return (resources[language] && resources[language][value]) || en[value] || value;
 }
 function diagnostics(language) {
@@ -188,4 +203,4 @@ function diagnostics(language) {
   const missing = keys.filter((key) => !dict[key]);
   return { language, total: keys.length, translated: keys.length - missing.length, missing, coverage: keys.length ? (keys.length - missing.length) / keys.length : 1 };
 }
-module.exports = { resources, setLocale, translate, diagnostics, coverageText, packProgressLabel };
+module.exports = { resources, setLocale, translate, diagnostics, coverageText, packProgressLabel, mb };
