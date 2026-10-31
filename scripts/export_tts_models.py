@@ -19,6 +19,8 @@ The registry below is therefore complete and the language selection is a command
 argument, so re-exporting one language cannot quietly discard the rest.
 """
 
+
+
 import json
 import os
 import sys
@@ -26,6 +28,8 @@ import sys
 import torch
 from onnxruntime.quantization import QuantType, quantize_dynamic
 from transformers import AutoTokenizer, VitsModel
+
+
 
 OUT_DIR = os.environ.get("TALK2_MODEL_OUTPUT", "model-assets")
 

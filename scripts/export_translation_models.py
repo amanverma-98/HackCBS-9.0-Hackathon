@@ -15,6 +15,8 @@ Usage:
 The output lands in app/src/main/assets/models/translation/.
 """
 
+
+
 import json
 import os
 import sys
@@ -25,6 +27,8 @@ import numpy as np
 import torch
 import onnxruntime
 from onnxruntime.quantization import quantize_dynamic, QuantType
+
+
 
 OUTPUT_DIR = os.environ.get("TALK2_MODEL_OUTPUT", "model-assets")
 
