@@ -15,7 +15,7 @@ Java device integrations, and an optional Node.js assistant backend.
   locally, sends text, and speaks it in the receiver's selected language.
   **Original voice** sends the recording without requiring a speech pack.
 - Choose send-on-release or transcript review.
-- Download checksum-verified speech packs from the Talk2 model release.
+- Download checksum-verified speech packs from the Talk2 model release
 - Share GPS coordinates with explicit consent and display peer distance and
   compass-relative bearing. Radar does not need GPT or an internet server.
 - Profile name and local photo; light/dark/system appearance; vibration,
