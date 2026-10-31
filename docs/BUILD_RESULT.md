@@ -18,6 +18,7 @@
 - APK contains the Hermes bundle, ARM64 Hermes runtime and ARM64 ONNX Runtime.
 - Source scan found no .kt/.kts files and none of the prohibited legacy-project terms.
 
+
 ## Outputs
 
 - dist/Talk2-1.1.0-arm64-test.apk
@@ -32,6 +33,7 @@
   - SHA-256: 176227e4e926c882a4c6b317b097ba8f252d190167abc1f5f8f37dc19de61004
   - requires the owner's Play upload key before publication
 
+
 The final clean build completed successfully in 50 seconds after the toolchain cache
 was prepared. Gradle reported deprecated build features that will need attention
 before Gradle 9; they do not fail this Gradle 8.13 build.
@@ -44,6 +46,7 @@ work. A real English STT ONNX file matched SHA-256
 9d64361bf2407fb7278cf546439786704ae05b92e5762022418f35968bfa3f65,
 loaded with input [batch, sequence_length] float32, returned shape [1,49,32]
 for a one-second zero test input, and produced finite output.
+
 
 ## Required device validation
 
