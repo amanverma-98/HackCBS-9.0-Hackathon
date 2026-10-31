@@ -111,10 +111,9 @@ Talk2 supports two independent communication paths that operate simultaneously:
 
 ### 🔒 Mode 1 — Direct Encrypted Pair
 
-```
-┌──────────┐    AES-256-GCM encrypted    ┌──────────┐
-│ Phone A  │ ◄══════════════════════════► │ Phone B  │
-└──────────┘   BT Classic / Wi-Fi Direct  └──────────┘
+```mermaid
+flowchart LR
+  A["📱 Phone A"] <-->|"AES-256-GCM encrypted\nBT Classic / Wi-Fi Direct"| B["📱 Phone B"]
 ```
 
 - One authenticated session at a time
@@ -124,18 +123,12 @@ Talk2 supports two independent communication paths that operate simultaneously:
 
 ### 🕸️ Mode 2 — BLE Mesh Relay (Multi-Hop)
 
-```
-                        ┌──────────┐
-                   ┌───►│ Phone C  │
-┌──────────┐  hop1 │    └──────────┘
-│ Phone A  │──────►┤                     hop3  ┌──────────┐
-│ (origin) │       │    ┌──────────┐  ────────►│ Phone E  │
-└──────────┘  hop1 ├───►│ Phone D  │           └──────────┘
-                   │    └──────────┘
-                   │    ┌──────────┐
-                   └───►│ Phone B  │
-                        │ (relay)  │
-                        └──────────┘
+```mermaid
+flowchart LR
+  A["📱 Phone A\n(origin)"] -->|"hop 1"| C["📱 Phone C"]
+  A -->|"hop 1"| D["📱 Phone D"]
+  A -->|"hop 1"| B["📱 Phone B\n(relay)"]
+  D -->|"hop 2"| E["📱 Phone E"]
 ```
 
 - Public broadcast with origin P-256 signatures
@@ -167,73 +160,79 @@ Talk2 supports two independent communication paths that operate simultaneously:
 
 ### Normal Flow
 
-```
- Open Talk2 ──► Set name ──► Choose ──► Download packs ──► Pair with ──► Confirm ──► Chat, voice
-                & role       language    (optional)         phone         code        & alerts
-                                                                            │
-                                                                            ▼
-                                                                    Start BLE mesh ──► Multi-hop
-                                                                    (optional)          SOS & voice
+```mermaid
+flowchart LR
+  A["🚀 Open Talk2"] --> B["Set name\n& role"]
+  B --> C["Choose\nlanguage"]
+  C --> D["Download packs\n(optional)"]
+  D --> E["Pair with\nphone"]
+  E --> F["Confirm\ncode"]
+  F --> G["💬 Chat, voice\n& alerts"]
+  G --> H["Start BLE mesh\n(optional)"]
+  H --> I["🕸️ Multi-hop\nSOS & voice"]
 ```
 
 ### Emergency Path
 
-```
- Emergency ──► Open Alert ──► Paired? ─── Yes ──► Send preset/custom alert ──► Peer receives
- occurs        tab                │                                              alert + siren
-                                 │
-                                 No ──► Start BLE mesh ──► Broadcast SOS ──► Relays across
-                                                                              mesh network
+```mermaid
+flowchart LR
+  A["🚨 Emergency\noccurs"] --> B["Open Alert\ntab"]
+  B --> C{"Paired?"}
+  C -->|"Yes"| D["Send preset/custom\nalert"]
+  D --> E["📳 Peer receives\nalert + siren"]
+  C -->|"No"| F["Start BLE\nmesh"]
+  F --> G["📡 Broadcast SOS"]
+  G --> H["🕸️ Relays across\nmesh network"]
 ```
 
 ---
 
 ## 🏗️ System Architecture
 
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│  React Native (TypeScript)                                              │
-│  App.tsx + Screens + Components                                         │
-└──────────┬──────────────────────────────────────────────────────────────┘
-           │ Native Bridge (Talk2Module.java)
-           ▼
-┌─────────────────────────────────────────────────────────────────────────┐
-│  Java Device Engine                                                     │
-│                                                                         │
-│  ┌─────────────────┐  ┌──────────────────┐  ┌───────────────────────┐  │
-│  │ PeerRadio.java   │  │ BleMeshTransport │  │ SecureChannel.java    │  │
-│  │ BT Classic /     │  │ BLE GATT         │  │ P-256 ECDH            │  │
-│  │ Wi-Fi Direct     │  │ advertise/scan   │  │ AES-256-GCM           │  │
-│  └─────────────────┘  └────────┬─────────┘  └───────────────────────┘  │
-│                                │                                        │
-│  ┌─────────────────┐  ┌───────┴──────────┐  ┌───────────────────────┐  │
-│  │ SpeechEngine     │  │ MeshRouter.java  │  │ ModelStore.java       │  │
-│  │ ONNX STT / TTS   │  │ Signed routing   │  │ Checksum downloads    │  │
-│  └─────────────────┘  │ TTL, dedup       │  └───────────────────────┘  │
-│                        └───────┬──────────┘                             │
-│  ┌─────────────────┐  ┌───────┴──────────┐  ┌───────────────────────┐  │
-│  │ TranslationEng.  │  │ MeshSendQueue    │  │ MeshVoiceStore.java   │  │
-│  │ IndicTrans2      │  │ Priority sched.  │  │ AtomicFile spool      │  │
-│  └─────────────────┘  └──────────────────┘  └───────────────────────┘  │
-│                                                                         │
-│  ┌─────────────────┐  ┌──────────────────┐                             │
-│  │ VoiceTransfer    │  │ ProfilePhoto     │                             │
-│  │ Bounded PCM      │  │ Local picker     │                             │
-│  └─────────────────┘  └──────────────────┘                             │
-└─────────────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+  subgraph RN["📱 React Native (TypeScript)"]
+    UI["App.tsx + Screens + Components"]
+  end
 
-┌─────────────────────────────────┐  ┌─────────────────────────────────┐
-│  shared/ (CommonJS)             │  │  backend/ (Express + MongoDB)   │
-│  core.cjs    — validation, GPS  │  │  auth.js      — signup/login    │
-│  i18n.cjs    — en/mr strings    │  │  volunteers.js — onboarding     │
-│  ptt.cjs     — push-to-talk     │  │  (optional, online only)        │
-│  location.cjs — consent/expiry  │  └─────────────────────────────────┘
-│  alerts.json — 5 × 10 languages│
-└─────────────────────────────────┘  ┌─────────────────────────────────┐
-                                     │  server/ (Node.js, optional)    │
-                                     │  index.mjs — OpenAI GPT proxy   │
-                                     │  (online only)                  │
-                                     └─────────────────────────────────┘
+  UI -->|"Native Bridge\n(Talk2Module.java)"| Engine
+
+  subgraph Engine["⚙️ Java Device Engine"]
+    direction LR
+    PR["PeerRadio\nBT Classic /\nWi-Fi Direct"]
+    BLE["BleMeshTransport\nBLE GATT\nadvertise / scan"]
+    SC["SecureChannel\nP-256 ECDH\nAES-256-GCM"]
+    SE["SpeechEngine\nONNX STT / TTS"]
+    MR["MeshRouter\nSigned routing\nTTL, dedup"]
+    MS["ModelStore\nChecksum downloads"]
+    TE["TranslationEngine\nIndicTrans2"]
+    MQ["MeshSendQueue\nPriority sched."]
+    MV["MeshVoiceStore\nAtomicFile spool"]
+    VT["VoiceTransfer\nBounded PCM"]
+  end
+
+  subgraph Shared["📦 shared/ (CommonJS)"]
+    direction LR
+    S1["core.cjs — validation, GPS"]
+    S2["i18n.cjs — en/mr strings"]
+    S3["ptt.cjs — push-to-talk"]
+    S4["location.cjs — consent/expiry"]
+    S5["alerts.json — 5 × 10 langs"]
+  end
+
+  subgraph Backend["🖥️ backend/ (Express + MongoDB)"]
+    B1["auth.js — signup/login"]
+    B2["volunteers.js — onboarding"]
+    B3["(optional, online only)"]
+  end
+
+  subgraph Server["🤖 server/ (Node.js, optional)"]
+    SV["index.mjs — OpenAI GPT proxy\n(online only)"]
+  end
+
+  UI --> Shared
+  UI --> Backend
+  UI --> Server
 ```
 
 The mobile app owns **all** peer communication, speech processing, and sensor data. The
@@ -265,11 +264,106 @@ The speech layer is **fully on-device**. No audio, text, or location data leaves
 
 ### 1. Talk2 Mobile App
 
-*Screenshots will be added after UI finalization — drop images into `docs/screenshots/`*
-
 The mobile app combines onboarding, encrypted direct chat, BLE mesh relay, multilingual
 speech, GPS radar, emergency alerts, and model management in a single offline-first
-experience. Five tabs organize the workflow:
+experience.
+
+#### 🚀 Onboarding & Setup
+
+<table>
+  <tr>
+    <td align="center">
+      <img src="./docs/screenshots/onboarding-welcome.png" alt="Welcome screen" width="240">
+      <br><sub>Welcome screen with language selection</sub>
+    </td>
+    <td align="center">
+      <img src="./docs/screenshots/onboarding-profile.png" alt="Profile setup" width="240">
+      <br><sub>Name, role, and profile setup</sub>
+    </td>
+    <td align="center">
+      <img src="./docs/screenshots/onboarding-permissions.png" alt="Permissions" width="240">
+      <br><sub>Bluetooth and location permissions</sub>
+    </td>
+  </tr>
+</table>
+
+#### 💬 Chat & Voice Communication
+
+<table>
+  <tr>
+    <td align="center">
+      <img src="./docs/screenshots/chat-text.png" alt="Text chat" width="240">
+      <br><sub>Encrypted text messaging</sub>
+    </td>
+    <td align="center">
+      <img src="./docs/screenshots/chat-voice.png" alt="Voice message" width="240">
+      <br><sub>Push-to-talk voice capture</sub>
+    </td>
+    <td align="center">
+      <img src="./docs/screenshots/chat-translation.png" alt="Translation" width="240">
+      <br><sub>Multilingual speech translation</sub>
+    </td>
+  </tr>
+</table>
+
+#### 📡 Radar & Mesh Network
+
+<table>
+  <tr>
+    <td align="center">
+      <img src="./docs/screenshots/radar-compass.png" alt="GPS radar" width="240">
+      <br><sub>GPS compass radar with peer bearing</sub>
+    </td>
+    <td align="center">
+      <img src="./docs/screenshots/mesh-network.png" alt="BLE mesh" width="240">
+      <br><sub>BLE mesh relay and neighbor list</sub>
+    </td>
+    <td align="center">
+      <img src="./docs/screenshots/mesh-voice.png" alt="Mesh voice" width="240">
+      <br><sub>Mesh voice notes broadcast</sub>
+    </td>
+  </tr>
+</table>
+
+#### 🚨 Emergency & Alerts
+
+<table>
+  <tr>
+    <td align="center">
+      <img src="./docs/screenshots/alert-presets.png" alt="Emergency presets" width="240">
+      <br><sub>One-tap emergency alert presets</sub>
+    </td>
+    <td align="center">
+      <img src="./docs/screenshots/alert-sos.png" alt="SOS broadcast" width="240">
+      <br><sub>SOS broadcast with mesh relay</sub>
+    </td>
+    <td align="center">
+      <img src="./docs/screenshots/alert-received.png" alt="Alert received" width="240">
+      <br><sub>Incoming alert with proximity siren</sub>
+    </td>
+  </tr>
+</table>
+
+#### ⚙️ Settings & Models
+
+<table>
+  <tr>
+    <td align="center">
+      <img src="./docs/screenshots/settings-language.png" alt="Language settings" width="240">
+      <br><sub>Independent language settings</sub>
+    </td>
+    <td align="center">
+      <img src="./docs/screenshots/settings-models.png" alt="Model packs" width="240">
+      <br><sub>Speech model pack downloads</sub>
+    </td>
+    <td align="center">
+      <img src="./docs/screenshots/settings-privacy.png" alt="Privacy" width="240">
+      <br><sub>Privacy and appearance controls</sub>
+    </td>
+  </tr>
+</table>
+
+Five tabs organize the workflow:
 
 | Tab | Purpose |
 | --- | --- |
