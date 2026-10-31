@@ -14,3 +14,7 @@ javac -encoding UTF-8 -cp "$talk2_test_dir/json.jar" -d "$talk2_test_dir/classes
 java -cp "$talk2_test_dir/classes:$talk2_test_dir/json.jar" com.talk2.MeshPacketTest
 javac -encoding UTF-8 -cp "$talk2_test_dir/json.jar" -d "$talk2_test_dir/classes" tests/stubs/android/util/Base64.java mobile/android/app/src/main/java/com/talk2/MeshPacket.java mobile/android/app/src/main/java/com/talk2/MeshFragmentCodec.java tests/MeshFragmentCodecTest.java
 java -cp "$talk2_test_dir/classes:$talk2_test_dir/json.jar" com.talk2.MeshFragmentCodecTest
+javac -encoding UTF-8 -cp "$talk2_test_dir/classes:$talk2_test_dir/json.jar" -d "$talk2_test_dir/classes" tests/stubs/android/util/AtomicFile.java mobile/android/app/src/main/java/com/talk2/MeshSendQueue.java mobile/android/app/src/main/java/com/talk2/MeshVoiceStore.java tests/MeshVoiceStoreTest.java
+java -cp "$talk2_test_dir/classes:$talk2_test_dir/json.jar" com.talk2.MeshVoiceStoreTest
+javac -encoding UTF-8 -cp "$talk2_test_dir/classes:$talk2_test_dir/json.jar" -d "$talk2_test_dir/classes" tests/stubs/android/security/keystore/KeyProperties.java tests/stubs/android/security/keystore/KeyGenParameterSpec.java mobile/android/app/src/main/java/com/talk2/MeshRouter.java tests/MeshRouterTest.java
+java -cp "$talk2_test_dir/classes:$talk2_test_dir/json.jar" com.talk2.MeshRouterTest

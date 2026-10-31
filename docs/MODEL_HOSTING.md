@@ -93,3 +93,36 @@ python scripts/inspect-models.py model-assets
 PowerShell: set `$env:TALK2_STT_HI_REPO="ai4bharat/indicwav2vec-hindi"` before invoking the exporter. The scripts write into `model-assets` by default; `TALK2_MODEL_OUTPUT` overrides it. Export compatibility varies across PyTorch/Transformers versions, and this replacement export has not been run as part of this package's validation. After obtaining the four Hindi files, regenerate and publish your release manifest normally.
 
 Checkpoint reference: https://huggingface.co/ai4bharat/indicwav2vec-hindi
+
+## Stage 3 model/language evidence matrix
+
+| Path | Supported in code | Model in bundled manifest | Automated in Stage 3 | Physical/model inference |
+| --- | --- | --- | --- | --- |
+| Original PCM, any spoken language | Direct up to 20s; public BLE up to 3s | None needed | Direct transfer regression and signed mesh simulation PASS | NOT TESTED, no phones |
+| Marathi STT -> source transcript -> Marathi TTS | Yes, recipient target/voice mr | mr pack present | Policy, transport preservation, runtime shape guards | NOT TESTED, no local weights |
+| Hindi speech -> Marathi translated speech | Code expects hi STT + translation + mr TTS | hi STT/TTS absent | Missing-source guard PASS | BLOCKED by missing Hindi speech files |
+| Hindi source text -> Marathi text/TTS | hi->mr translation, then mr voice | translation + mr present | Pair/pack/voice policy PASS | NOT TESTED, no local weights |
+| Marathi speech -> Hindi text | mr STT and mr->hi translation | mr + translation present | Pair policy PASS | NOT TESTED, no local weights |
+| Marathi speech -> Hindi TTS | Translation supported; hi voice required | hi TTS absent | Missing-target guard PASS | BLOCKED by missing Hindi voice |
+| ta,bn,gu,kn,ml,te,or,en same-language STT/TTS | Same-language identity path | Corresponding nine total speech packs present | Language policy only | NOT TESTED, no local weights |
+| Other general translation pairs | Unavailable | No validated preprocessing/model route | Reject/preserve Original PASS | NOT TESTED |
+
+Stage 3 inspected the actual exporter source: export_models.py exports one float
+input `input` and CTC `output`; export_tts_models.py exports INT64 `text` to waveform
+`output`; export_translation_models.py exports encoder input_ids/attention_mask
+and decoder decoder_input_ids/encoder_hidden_states/encoder_attention_mask.
+These are exporter contracts, not an inspection of installed ONNX weights.
+SpeechEngine checks runtime tensor count, input type/rank and output type/rank,
+CTC blank/vocabulary dimensions; ModelStore.ready checks size/digest before use.
+Existing capture and playback use 16 kHz mono PCM. A replacement TTS export must
+verify its checkpoint sample rate is 16 kHz; runtime tensors alone do not prove it.
+
+`rg --files --hidden --no-ignore -g '*.onnx'` with node_modules/Gradle/reference
+cache exclusions found no local weights. No installed pack can be established
+because adb lists no devices. No Hindi voice-to-voice demo was performed. The
+available automated demo is source transcript + exact original PCM preservation
+through signed A-B-C protocol simulation; it is not neural inference or radio
+validation. For real-model acceptance install checksum-verified mr on two phones,
+record Marathi, attach transcript, send public note, select mr target and mr voice,
+then play Original and synthesized source transcript with internet off. Separately
+exercise hi text -> mr using the translation pack; do not call that Hindi STT.

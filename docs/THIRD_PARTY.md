@@ -9,3 +9,11 @@ Stage 1 and Stage 2 reviewed these projects before implementation. No source cod
 | [Knit](https://github.com/getknit/knit) | Root COPYING inspected in Stage 1 at main; Stage 2 source study pinned to `e2c89579eb131de046fb2bc07fb7718d5cc9d598` | GNU General Public License v3.0; README also says GPL-3.0-or-later | Read transport seam, router and store-and-forward architecture; no code reused |
 
 The source for any future reuse must be tied to an exact commit and file, with its license reviewed at that revision. Do not rely on a README statement when the repository's exact license file is available. ResQMesh code remains excluded unless its maintainers provide a license grant. Its revision pin is an unresolved research limit; no derived code was used.
+
+Stage 3 resolved that ResQMesh research pin and inspected actual source/tests:
+BitChat `20501fdfe0d56c7705c377d4a263b01d8f38eeeb` (root LICENSE.md: GPL-3.0),
+ResQMesh `7257a1abfe6d72f1b5cb81a440bb408d3c6b79e3` (no root license grant),
+and Knit `bd1e363954e60352463bb2105563651f6403338e` (root COPYING: GPL-3.0).
+See REFERENCE_IMPLEMENTATION_MAP.md for exact files and Talk2 mappings. No source
+or assets were reused, no GPL subsystem was imported, and no wire compatibility
+is claimed.

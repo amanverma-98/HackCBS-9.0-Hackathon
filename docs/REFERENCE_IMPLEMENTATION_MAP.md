@@ -60,3 +60,22 @@ adapted. Android Bluetooth platform APIs and Talk2's existing security code are
 used directly. All mesh packet and routing implementation is authored for Talk2.
 The ResQMesh revision pin remains an unresolved research limitation and should be
 verified before future comparative research.
+
+## Stage 3 source study (immutable local Git checkouts)
+
+API requests failed (connection failure, then HTTP 403). Public Git clones
+succeeded in the ignored `.stage2-java-test/references/` cache. These revisions
+resolve the earlier unpinned ResQMesh research limitation. No external application
+source was copied or translated into Talk2.
+
+| Project / inspected revision | Source and tests inspected | Talk2-owned behavior |
+| --- | --- | --- |
+| BitChat Android `20501fdfe0d56c7705c377d4a263b01d8f38eeeb` | `app/src/main/java/com/bitchat/android/mesh/FragmentManager.kt`, `app/src/test/java/com/bitchat/android/mesh/FragmentManagerTest.kt`, root `LICENSE.md` | Validate count/size before allocation; bounded reassembly, duplicate handling, expiry. `MeshFragmentCodec`, `MeshVoiceStore`, their Java tests. Talk2 retains its own framing. |
+| ResQMesh `7257a1abfe6d72f1b5cb81a440bb408d3c6b79e3` | `app/src/main/java/edu/cit/resqmesh/core/network/ReliableMeshTransfers.kt`, `core/network/transport/NativeOutboundDispatcher.kt`, `core/audio/RadioVoiceQueue.kt`; corresponding `ReliableMeshTransfersTest.kt`, `RadioVoiceQueueTest.kt` under `app/src/test/java/edu/cit/resqmesh`; root listing | Persistent media pieces, custody separate from recipient receipt, excluding ingress on onward relay, control priority over bulk. `MeshVoiceStore` retains original signed envelopes outside Settings; `MeshRouter` and `MeshSendQueue` reserve control capacity. |
+| Knit `bd1e363954e60352463bb2105563651f6403338e` | `app/src/main/java/app/getknit/knit/mesh/MeshRouter.kt`, `CompositeMeshTransport.kt`; `app/src/test/java/app/getknit/knit/CompositeMeshTransportTest.kt`; root `COPYING` | Preserve signed origin content during relay, keep transport selection behind a seam. `MeshVoiceStore.relayStep` retains origin signatures. Optional transport deferred without measured phone evidence. Knit's private opaque relay is not a claim about Talk2's public audio. |
+
+BitChat LICENSE.md and Knit COPYING identify GNU GPL version 3 at these exact
+revisions. ResQMesh has no root LICENSE/COPYING and no verified license grant.
+The study used behaviors and failure cases; no verbatim source, mechanical port,
+dependency, UI, database, assets or wire compatibility was adopted. All new Java/
+React Native code is Talk2-owned. External tests were read, not run as validation.

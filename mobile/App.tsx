@@ -19,6 +19,9 @@ import {
   View,
   useColorScheme,
 } from "react-native";
+import { RadarPeers } from "./src/RadarPeers";
+import { TranslatedVoice } from "./src/TranslatedVoice";
+import { MeshVoicePanel } from "./src/MeshVoicePanel";
 import { Native, Mesh, events, permissions } from "./src/native";
 import { DEFAULT_BACKEND_URL, DEFAULT_MANIFEST_URL } from "./src/config";
 import { LANGUAGES, position, prune, validMessage } from "../shared/core.cjs";
@@ -27,6 +30,7 @@ import upstream from "../model-host/upstream-manifest.json";
 import { PushToTalk } from "../shared/ptt.cjs";
 const onboarding = require("../shared/onboarding.cjs");
 const i18n = require("../shared/i18n.cjs");
+const locationPolicy = require("../shared/location.cjs");
 const packUtils = require("../shared/model-packs.cjs");
 let activeUi = "en";
 function localized(value: any): any {
@@ -62,6 +66,9 @@ type Message = {
   name?: string;
   audioUri?: string;
   durationMs?: number;
+  mesh?: boolean;
+  transcript?: string;
+  recipient?: string;
 };
 type Settings = {
   settingsVersion: number;
@@ -262,6 +269,11 @@ export default function App() {
     [meshNode, setMeshNode] = useState(""),
     [meshPeers, setMeshPeers] = useState<string[]>([]),
     [meshText, setMeshText] = useState("");
+  const [meshLinkSeen, setMeshLinkSeen] = useState<Record<string, number>>({});
+  const [meshLocations, setMeshLocations] = useState<Record<string, any>>({}),
+    [meshSharing, setMeshSharing] = useState(false), [peerRole, setPeerRole] = useState("unknown"),
+    [compassMeta, setCompassMeta] = useState<any>(null);
+  const meshSharingRef = useRef(false), meshEnabledRef = useRef(false), meshIdRef = useRef(""), lastMeshPosition = useRef(0);
   const [sensorStatus, setSensorStatus] = useState(
     "Waiting for a location fix",
   );
@@ -327,19 +339,15 @@ export default function App() {
     }
   };
   const wire = async (m: any) => Native.send(JSON.stringify(m));
-  const sendPosition = (fix: any) => {
-    if (!ref.current.shareLocation || !paired.current || !fix) return;
-    return wire({
-      id: uid(),
-      kind: "position",
-      time: Date.now(),
-      ageMs: Math.max(0, Date.now() - fix.time),
-      coords: {
-        latitude: fix.latitude,
-        longitude: fix.longitude,
-        accuracy: fix.accuracy,
-      },
-    });
+  const sendPosition = async (fix: any) => {
+    if (!locationPolicy.usableLocation(fix)) return;
+    const now = Date.now();
+    if (ref.current.shareLocation && paired.current) await wire({ id: uid(), kind: "position", time: now, expires: fix.time + 30000,
+      ageMs: Math.max(0, now - fix.time), coords: { latitude: fix.latitude, longitude: fix.longitude, accuracy: fix.accuracy } });
+    if (meshEnabledRef.current && meshSharingRef.current && now - lastMeshPosition.current >= 10000) {
+      lastMeshPosition.current = now;
+      await Native.shareMeshPosition(JSON.stringify({ time: now, expires: fix.time + 30000, coords: fix, name: ref.current.name, role: ref.current.role }));
+    }
   };
   const control = (op: string, extra: any = {}) =>
     wire({
@@ -415,6 +423,7 @@ export default function App() {
     if (m.kind === "profile") {
       peerLabel.current = String(m.name || "Peer").slice(0, 40);
       setPeerName(peerLabel.current);
+      setPeerRole(onboarding.ROLES.includes(m.role) ? m.role : "unknown");
       peerId.current = String(m.deviceId || "");
       voicePeer.current = m.capabilities?.includes("voice-pcm-v1") === true;
       setVoiceCapable(voicePeer.current);
@@ -425,21 +434,8 @@ export default function App() {
       return;
     }
     if (m.kind === "position") {
-      const p = m.coords;
-      if (
-        p &&
-        Number.isFinite(p.latitude) &&
-        Math.abs(p.latitude) <= 90 &&
-        Number.isFinite(p.longitude) &&
-        Math.abs(p.longitude) <= 180 &&
-        Number.isFinite(p.accuracy) &&
-        p.accuracy >= 0
-      )
-        setPeerLocation({
-          ...p,
-          time:
-            Date.now() - Math.max(0, Number.isFinite(m.ageMs) ? m.ageMs : 0),
-        });
+      const fix = { ...m.coords, time: m.time - Math.max(0, Number(m.ageMs) || 0), expires: m.expires || m.time + 30000 };
+      if (locationPolicy.usableLocation(fix)) setPeerLocation(fix);
       return;
     }
     if (!["text", "alert", "voice"].includes(m.kind)) return;
@@ -547,9 +543,19 @@ export default function App() {
           setRadioStatus(e.message || "Connection failed");
         }
         if (e.type === "voiceError") setError(e.message);
+        if (e.type === "meshVoice") receiveChain.current = receiveChain.current.catch(() => {}).then(async () => {
+          if (!ref.current.messages.some(m => m.id === e.id && m.direction === "in")) await add({ id: e.id, kind: "voice", text: e.transcript || "Public voice note", transcript: e.transcript, language: e.language, time: e.created, direction: "in", status: "received", mesh: true, audioUri: e.audioUri, durationMs: e.durationMs, name: e.sender.slice(0, 8) });
+        }).catch((x: any) => setError(x.message));
+        if (e.type === "meshVoiceOutgoing") receiveChain.current = receiveChain.current.catch(() => {}).then(async () => {
+          if (!ref.current.messages.some(m => m.id === e.id && m.direction === "out")) await add({ id:e.id, kind:"voice", text:e.transcript || "Public voice note", transcript:e.transcript, language:e.language, time:e.created, direction:"out", status:e.status, mesh:true, audioUri:e.audioUri, recipient:e.recipient });
+        }).catch((x:any) => setError(x.message));
+        if (e.type === "meshVoiceStatus" && ref.current.messages.some(m => m.id === e.id && m.mesh && (m.status !== e.status || (m.recipient || "") !== (e.recipient || "")))) change({ messages: ref.current.messages.map(m => m.id === e.id && m.mesh ? { ...m, status: e.status, recipient: e.recipient } : m) });
+        if (e.type === "meshPosition" && e.sender !== meshIdRef.current) setMeshLocations(old => locationPolicy.mergeLocationPeer(old, e));
+        if (e.type === "meshNeighbor") setMeshLinkSeen(old => { const next = { ...old }; if (e.connected) next[e.id] = Date.now(); else delete next[e.id]; return next; });
+        if (e.type === "meshVoicePiece") setMeshLinkSeen(old => old[e.neighbor] ? { ...old, [e.neighbor]: Date.now() } : old);
         if (e.type === "meshNeighbor") setMeshPeers((old) => e.connected ? (old.includes(e.id) ? old : [...old, e.id]) : old.filter((id) => id !== e.id));
         if (e.type === "meshError") setError(e.message || "BLE mesh error");
-        if (e.type === "meshStopped") { setMeshActive(false); setMeshPeers([]); }
+        if (e.type === "meshStopped") { meshEnabledRef.current = false; meshSharingRef.current = false; setMeshSharing(false); setMeshActive(false); setMeshPeers([]); setMeshLinkSeen({}); }
         if (e.type === "meshMessage" || e.type === "meshSOS") receiveMesh(e).catch((x: any) => setError(x.message));
         if (e.type === "meshReceipt") setRadioStatus("Mesh destination receipt received");
         if (e.type === "sensorStatus") setSensorStatus(e.message);
@@ -560,8 +566,8 @@ export default function App() {
         if (e.type === "peer")
           setPeers((p) =>
             p.some((x) => x.id === e.id && x.transport === e.transport)
-              ? p
-              : [...p, e],
+              ? p.map(x => x.id === e.id ? { ...x, lastSeen: Date.now() } : x)
+              : [...p, { ...e, lastSeen: Date.now() }],
           );
         if (e.type === "pairing") {
           setPairCode(e.code);
@@ -580,6 +586,7 @@ export default function App() {
             kind: "profile",
             time: Date.now(),
             name: ref.current.name,
+            role: ref.current.role,
             deviceId: ref.current.deviceId,
             capabilities: ["voice-pcm-v1"],
           }).catch((x: any) => setError(x.message));
@@ -622,7 +629,7 @@ export default function App() {
               .catch((x: any) => setError(x.message));
           }
         }
-        if (e.type === "heading") setHeading(e.degrees);
+        if (e.type === "heading") { setHeading(e.degrees); setCompassMeta({ ...e, time: Date.now() }); }
         if (e.type === "location") {
           locationRef.current = e;
           setLocation(e);
@@ -1007,7 +1014,7 @@ export default function App() {
         await sendPosition(locationRef.current);
       });
     else {
-      Native.stopSensors();
+      if (!meshSharingRef.current) Native.stopSensors();
       if (paired.current)
         wire({ id: uid(), kind: "position-off", time: Date.now() }).catch(
           (e: any) => setError(e.message),
@@ -1253,13 +1260,13 @@ export default function App() {
           card(
             <>
               {note(
-                `${m.direction === "out" ? "You" : m.name || "Peer"} · ${m.language === "und" ? i18n.translate("Language unknown", activeUi) : m.language.toUpperCase()} · ${new Date(m.time).toLocaleTimeString()} · ${m.status}`,
+                `${m.direction === "out" ? "You" : m.name || "Peer"} · ${m.language === "und" ? i18n.translate("Language unknown", activeUi) : m.language.toUpperCase()} · ${new Date(m.time).toLocaleTimeString()} · ${i18n.translate(m.mesh && m.status === "custody" ? "Relay accepted a piece; recipient delivery pending" : m.status, activeUi)}`,
               )}
-              <Text selectable style={[s.message, { color: c.ink }]}>
+              <NativeText selectable style={[s.message, { color: c.ink }]}>
                 {m.template
                   ? phrase(m.template, data.targetTranslation) || m.text
-                  : m.text}
-              </Text>
+                  : m.mesh && !m.transcript ? i18n.translate("Public voice note", activeUi) : m.text}
+              </NativeText>
               <View style={s.row}>
                 {button("▶ Play", () => run(() => play(m), "Speaking…"), true)}
                 {m.direction === "out" &&
@@ -1351,24 +1358,24 @@ export default function App() {
       </Pressable>
     </Animated.View>
   );
-  const fresh =
-    location &&
-    peerLocation &&
-    clock - location.time < 30000 &&
-    clock - peerLocation.time < 30000;
-  const polar = fresh ? position(location, peerLocation, heading) : null;
+  const fresh = locationPolicy.usableLocation(location, clock) && locationPolicy.usableLocation(peerLocation, clock);
+  const compassReliable = !!compassMeta && clock - compassMeta.time < 3000 && compassMeta.accuracy >= 2 && compassMeta.trueNorth === true;
+  const radarHeading = compassReliable ? heading : 0;
+  const polar = fresh ? position(location, peerLocation, radarHeading) : null;
   const radarDistance = polar ? polar.distance : null;
   const discoveredPeers = [
-    ...peers.map((peer) => ({ ...peer, route: "direct" })),
-    ...meshPeers.map((id) => ({ id, name: id.slice(0, 8), transport: "BLE mesh", route: "direct" })),
+    ...peers.map(peer => ({ ...peer, route: "direct" })),
+    ...meshPeers.map(id => ({ id, name: id.slice(0, 8), transport: "BLE mesh", route: "direct", connected: true, lastSeen: meshLinkSeen[id] })),
+    ...Object.values(meshLocations).filter((p:any) => clock - p.lastSeen < 300000),
+    ...(connected ? [{ id: peerId.current || "paired", name: peerName, role: peerRole, transport: "Paired direct", connected: true, route: "direct", coords: peerLocation, lastSeen: peerLocation?.time }] : []),
   ];
-  const visiblePeers = discoveredPeers.filter((peer) => peerFilter === "all" || peer.route === peerFilter);
+  const visiblePeers = locationPolicy.peerView(discoveredPeers, peerFilter, location, radarHeading, clock);
   useEffect(() => {
     if (
       !connected ||
       !sirenEnabled ||
       radarDistance === null ||
-      radarDistance > 20
+      radarDistance + (location?.accuracy || 100) + (peerLocation?.accuracy || 100) > 20
     )
       return;
     if (ref.current.sounds) Native.sirenTone();
@@ -1675,138 +1682,29 @@ export default function App() {
             )}
           </>,
         )}
-        <View
-          style={[s.radar, { backgroundColor: c.card, borderColor: c.line }]}
-        >
-          {[240, 160, 80].map((size) => (
-            <View
-              key={size}
-              style={{
-                position: "absolute",
-                width: size,
-                height: size,
-                borderRadius: size / 2,
-                borderWidth: 1,
-                borderColor: c.line,
-                left: (280 - size) / 2,
-                top: (280 - size) / 2,
-              }}
-            />
-          ))}
-          {connected && (
-            <View
-              style={[
-                s.distanceBadge,
-                s.radarDistance,
-                { borderColor: c.line },
-              ]}
-            >
-              <Text style={{ color: c.muted, fontSize: 11 }}>DISTANCE</Text>
-              <Text style={[s.distanceValue, { color: c.ink }]}>
-                {radarDistance === null
-                  ? "--"
-                  : `${Math.round(radarDistance)} m`}
-              </Text>
-            </View>
-          )}
-          <Pressable
-            accessibilityRole="switch"
-            accessibilityState={{ checked: sirenEnabled }}
-            onPress={() => {
-              const value = !sirenEnabled;
-              setSirenEnabled(value);
-              change({ sirenEnabled: value });
-            }}
-            style={[
-              s.sirenPill,
-              {
-                backgroundColor: sirenEnabled ? "#347453" : c.bg,
-                borderColor: c.line,
-              },
-            ]}
-          >
-            <Text
-              style={{
-                color: sirenEnabled ? "#FFF" : c.muted,
-                fontSize: 12,
-                fontWeight: "700",
-              }}
-            >
-              {sirenEnabled ? "Siren ON · 20 m" : "Siren OFF"}
-            </Text>
-          </Pressable>
-          {["N", "E", "S", "W"].map((name, i) => {
-            const angle = ((i * 90 - heading) * Math.PI) / 180;
-            return (
-              <Text
-                key={name}
-                style={{
-                  position: "absolute",
-                  left: 134 + Math.sin(angle) * 123,
-                  top: 130 - Math.cos(angle) * 123,
-                  color: c.muted,
-                }}
-              >
-                {name}
-              </Text>
-            );
-          })}
-          <Text style={{ fontSize: 34, color: "#347453" }}>↑</Text>
-          {polar && (
-            <View
-              style={{
-                position: "absolute",
-                left:
-                  130 +
-                  Math.sin((polar.relative * Math.PI) / 180) *
-                    Math.min(110, polar.distance / 2),
-                top:
-                  130 -
-                  Math.cos((polar.relative * Math.PI) / 180) *
-                    Math.min(110, polar.distance / 2),
-                width: 20,
-                height: 20,
-                borderRadius: 10,
-                backgroundColor: "#D47743",
-              }}
-            />
-          )}
-        </View>
-        {title(`${Math.round(heading)}° heading`)}
-        {note(
-          polar
-            ? `${Math.round(polar.distance)} m · bearing ${Math.round(polar.bearing)}° · ±${Math.round(location.accuracy + peerLocation.accuracy)} m combined uncertainty${polar.distance <= 20 && sirenEnabled ? " · SIREN ACTIVE" : ""}`
-            : "Peer direction unavailable: both phones need fresh shared GPS.",
-        )}
-        {note(
-          "Bluetooth strength cannot determine a device’s direction. Devices without coordinates appear only in the discovery list.",
-        )}
-        {discoveredPeers.length > 0 &&
-          card(
-            <>
-              {title("Talk2 devices nearby")}
-              <View style={s.row}>
-                {["all", "direct", "relayed"].map((mode) => button(mode === "all" ? "All" : mode === "direct" ? "Direct" : "Relayed", () => setPeerFilter(mode as any), peerFilter !== mode))}
-              </View>
-              {visiblePeers.map((p) => (
-                <View style={s.row} key={p.transport + p.id}>
-                  <Text style={{ color: c.ink, flex: 1 }}>
-                    {p.name} · {p.transport}
-                  </Text>
-                  {p.transport === "BLE mesh" ? <Text style={{ color: c.muted }}>Mesh link</Text> : button("Join", () => run(() => Native.join(p.transport, p.id)), true)}
-                </View>
-              ))}
-            </>,
-          )}
+        <RadarPeers color={c.ink} peers={visiblePeers} filter={peerFilter} onFilter={setPeerFilter} heading={radarHeading} compass={compassReliable} ui={activeUi} onJoin={p => run(() => Native.join(p.transport, p.id))} />
+        {button(meshSharing ? "Stop public location sharing" : "Share public mesh location", () => {
+          if (meshSharing) { meshSharingRef.current = false; setMeshSharing(false); run(() => Native.shareMeshPosition(JSON.stringify({ off: true, time: Date.now(), expires: Date.now() + 30000 }))); return; }
+          Alert.alert("Share public mesh location", "Your coordinates, name and self-declared role will be public to nearby phones and relays for 30 seconds per update.", [
+            { text: "Cancel", style: "cancel" }, { text: "Share location", onPress: () => run(async () => {
+              await permissions("location"); await Native.startSensors(); if (!meshEnabledRef.current) return;
+              meshSharingRef.current = true; setMeshSharing(true); lastMeshPosition.current = 0; await sendPosition(locationRef.current);
+            }) },
+          ]);
+        }, true, !meshActive)}
+        {!meshSharing && note("Public location sharing is off")}
         {button("Discover nearby phones", () => setShowConnect(true), true)}
         {card(
           <>
             {title("BLE text & SOS mesh")}
+            <MeshVoicePanel color={c.ink} installed={packs} available={(manifest || upstream).packs} active={meshActive} source={data.sourceSpeech} ui={activeUi} onSent={async (id, uri, language, transcript) => {
+              await add({ id, kind: "voice", text: transcript || "Public voice note", transcript, language, time: Date.now(), direction: "out", status: "queued", mesh: true, audioUri: uri });
+            }} />
             {note("Separate from paired chat. Nearby phones can read relayed text; packet signatures identify the sender but do not encrypt its contents. Keep private details out of mesh messages.")}
             {button(meshActive ? "Stop BLE mesh" : "Start BLE mesh", () => run(async () => {
               if (meshActive) { Mesh.stop(); setMeshActive(false); setMeshPeers([]); return; }
               await permissions("radio");
-              const id = await Mesh.start(); setMeshNode(id); setMeshActive(true);
+              const id = await Mesh.start(); meshIdRef.current = id; meshEnabledRef.current = true; setMeshNode(id); setMeshActive(true);
             }), true)}
             {note(i18n.translate(meshActive ? "BLE mesh is active" : "BLE mesh is off until you start it.", activeUi))}{meshActive ? note(`${meshPeers.length} ${i18n.translate("Nearby BLE links", activeUi)} · ${meshNode.slice(0, 8)}`) : null}
             <Field value={meshText} onChangeText={setMeshText} placeholder="Public mesh text or SOS details" multiline c={c} />

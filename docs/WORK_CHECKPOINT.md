@@ -205,3 +205,253 @@ voice-note transfer over a physically proven mesh, preserve the direct voice pat
 and retain the signed-role verification boundary. Do not start Stage 3 before
 Stage 2 commit and physical mesh evidence or an explicit decision to proceed with
 those tests still pending.
+
+## Stage 3 entry assessment (before source edits)
+
+- Baseline: main at f95a6557f584c7cc9de00203cf89a5cb9c0ea9e1. The sole existing
+  edit is mobile/android/gradle/wrapper/gradle-wrapper.properties (9.7.1 URL with
+  8.13 checksum); preserve and exclude it. No AGENTS.md found in the checkout.
+- Stage 2 implements signed v1 text, sos, custody and ack packets, four-hop TTL,
+  24-hour expiry validation, three BLE neighbors, 16-entry AtomicFile queues,
+  fragmentation and origin signatures. Tests cover envelope integrity/bounds and
+  fragmentation. No two/three-phone physical result exists. adb enumeration initially
+  failed on the environment's unwritable .android directory; device presence is not established.
+- Mesh bodies are public, not E2EE. Signatures bind device keys, not people or roles.
+  Mutable hop fields are not signed. Custody is not destination delivery. ACK
+  targeting, queue expiry and bulk scheduling need narrow repairs for voice.
+- Direct PeerRadio still uses authenticated SecureChannel over Classic RFCOMM or
+  Wi-Fi Direct TCP. VoiceTransfer handles 16 kHz mono PCM, up to 20 seconds, local
+  files and sequential direct frames. SpeechEngine.start/stop, VoiceTransfer.save/read,
+  native playVoice, SpeechEngine.transcribe/speak and TranslationEngine.translate
+  are reusable. Direct mode will remain separate from public mesh broadcast.
+- Manifest: nine speech packs (ta,bn,gu,mr,kn,ml,te,or,en), no Hindi pack; shared
+  translation accepts only hi <-> mr. No local ONNX weights found in the checkout;
+  installed device packs and actual inference cannot yet be claimed. STT normalizes
+  16 kHz PCM into a single-input CTC graph; TTS requires single-input MMS-VITS;
+  translation feeds input_ids/attention_mask and decoder_input_ids/
+  encoder_hidden_states/encoder_attention_mask. Actual weights require inspection.
+- Radar currently uses one paired-peer location separately from its filtered list;
+  no mesh location store exists. Freshness checks lack full accuracy/range checks.
+- Planned edits: mesh voice protocol/storage/scheduling/tests; minimal packet/router/
+  BLE priority fixes; bridge and UI for explicit public notes, transcript and states;
+  shared language/location policy and tests; Marathi catalog; reference/license,
+  model, architecture, verification and physical-test documentation. Original voice
+  must remain independent of models/internet. No optional transport without measurements.
+
+## Milestone 3A checkpoint
+
+Implemented public broadcast Original voice in MeshPacket v1 (new voice body
+schema v1), existing BLE transport/router, recording and playback. Explicit
+confirmation states audio/transcripts are readable by relays. No private mesh
+or E2EE claim. Direct PeerRadio/VoiceTransfer remain unchanged.
+
+Limits: 3 seconds / 96,000 bytes 16 kHz mono PCM; 512-byte pieces, maximum 188;
+2 outgoing / 6 active total / 32 retained records; 4 MiB spool; 30-minute expiry;
+3 automatic whole-note rounds with 30-second gaps and one packet per second.
+Metadata precedes allocation. Piece files and AtomicFile records support restart,
+missing/out-of-order/duplicate pieces, integrity validation, signed-origin cancel,
+cleanup, and separate custody/recipient receipts. Relay spool retains original
+signed envelopes; relay receipt does not erase onward delivery data. Recipient
+receipt means at least one public receiver durably saved the note, not all phones.
+
+Narrow Stage 2 repairs: custody replies go to ingress (previously skipped it),
+addressed custody checks, directed text ACK source matching, expired queue cleanup,
+last-hop handling, reserved bulk capacity, and priority BLE packet queues. SOS
+preempts queued bulk after the active packet completes; fragments are not interleaved.
+
+Files: MeshVoiceStore.java, MeshSendQueue.java, MeshPacket.java, MeshRouter.java,
+BleMeshTransport.java, Talk2Module.java, SpeechEngine.java; mobile/App.tsx,
+mobile/src/MeshVoicePanel.tsx; shared/i18n.cjs, shared/stage3-ui.cjs;
+tests/MeshVoiceStoreTest.java, tests/stubs/android/util/AtomicFile.java;
+scripts/test-java.ps1 and scripts/test-java.sh; this checkpoint.
+
+Checks:
+- powershell -ExecutionPolicy Bypass -File scripts/test-java.ps1: PASS all six
+  harnesses, including direct maximum clip/order/hash/path regression and mesh
+  validation/restart/duplicates/missing/hash/expiry/cancel/receipt/SOS priority.
+  Signed A-B-C protocol simulation passes without an A-C delivery path; no radios
+  or Android playback involved in this JVM simulation.
+- npm run check: PASS, 17 Node tests and TypeScript.
+- Gradle 8.13 binary and workspace cache command recorded in Stage 2 above, with
+  -p mobile/android :app:assembleDebug --console=plain: BUILD SUCCESSFUL in 13s,
+  49 tasks (7 executed). Existing wrapper edit preserved. SDK access required
+  an elevated tool call in this environment.
+- adb devices -l (ANDROID_USER_HOME and ANDROID_SDK_HOME set to
+  mobile/.android-stage2): empty device list. Physical direct voice, two-phone
+  BLE voice, three-phone relay, playback and OEM behavior: NOT TESTED.
+
+Next milestone: add receiver transcript translation/TTS with explicit pack and
+language checks, preserving the original audio on every failure.
+
+## Milestone 3B checkpoint
+
+3A source/checkpoint commit: 6d8c835. Added optional source transcription of the
+saved original clip, source-language metadata, receiver text translation and
+separate TTS actions. All four language settings stay independent. Original
+playback survives missing packs, incompatible vocab/model, unsupported pair and
+TTS/target mismatch. Failed transcription does not erase the recorded draft.
+
+Files: mobile/src/TranslatedVoice.tsx, mobile/src/MeshVoicePanel.tsx, mobile/App.tsx,
+shared/language-state.cjs, tests/stage3.test.cjs, SpeechEngine.java,
+TranslationEngine.java, docs/MODEL_HOSTING.md, this checkpoint. Stage 3 strings
+are bundled in shared/stage3-ui.cjs with English fallback and Marathi coverage.
+
+npm run check: PASS, 19 Node tests plus TypeScript. Runtime model guards validate
+actual session metadata; no tensor names or language assets invented. No local
+ONNX files exist, and adb device list is empty: real inference and physical
+voice-to-voice acceptance remain NOT TESTED. Hindi STT/TTS missing from manifest;
+only hi<->mr general translation is enabled. Full evidence matrix and reproducible
+Marathi identity/hi-text-to-mr demo paths are in docs/MODEL_HOSTING.md.
+
+Next: location consent/expiry/accuracy, common radar/list filtering, reference
+source/verification contract documentation, and final Android validation.
+`Gradle 8.13 -p mobile/android :app:compileDebugJavaWithJavac --console=plain`: BUILD SUCCESSFUL in 3s (30 tasks, 4 executed) for 3B.
+
+## Milestone 3C checkpoint
+
+3B source/checkpoint commit: b13145e. Public mesh location consent is per-session,
+independent of paired-only sharing; stop packets and 30-second expiry prevent
+stale fixes. Range/accuracy/future timestamps are checked. peerView supplies both
+anonymous radar dots and the discovery list with one filter; names, roles,
+Unverified, distance/uncertainty, last-seen and connection details stay in rows.
+Compass quality/freshness gates relative bearing; otherwise the radar is north-up.
+No RSSI-derived coordinates and no self-declared verified staff colors were added.
+
+Further bounded voice hardening during final acceptance: outward signed cancel
+propagation, outgoing-history recovery after restart, no URI in public metadata,
+monotonic partial-custody state, no per-piece Settings rewrites, clear-history
+spool/router cleanup, exclusion of ingress for relay queues, and GATT write
+watchdog/fragment-start recovery. The JVM router tests inject keys and a file
+store, never pretend to test Android Keystore or actual BLE.
+
+Optional transport: DEFERRED. adb returned no devices, so there is no measured BLE
+capacity evidence to justify either Wi-Fi Aware or Nearby. No optional transport,
+Play Services dependency, fallback claim, dashboard, live call, Meshtastic or
+Next.js service was added. VERIFICATION_API.md identifies the actual unconnected
+provider stub, current fail-closed display selectors and future integration points.
+
+Pinned actual source/test study and license provenance for BitChat, ResQMesh and
+Knit are in REFERENCE_IMPLEMENTATION_MAP.md and THIRD_PARTY.md. No code copied.
+DEVICE_TESTS.md cards 17-20 provide device/build/permission/topology/timestamp/
+size/ACK/log fields and exact two-phone, three-phone, model and location steps.
+All physical and emulator results remain NOT TESTED. Full model matrix and actual
+available automated demo path remain in MODEL_HOSTING.md.
+
+Final validation/artifact results and final source commit follow below.
+
+### Exact Stage 3 changed files (relative to input f95a655)
+- `docs/ARCHITECTURE.md`
+- `docs/DEVICE_TESTS.md`
+- `docs/MODEL_HOSTING.md`
+- `docs/REFERENCE_IMPLEMENTATION_MAP.md`
+- `docs/STATUS.md`
+- `docs/THIRD_PARTY.md`
+- `docs/VERIFICATION_API.md`
+- `docs/WORK_CHECKPOINT.md`
+- `mobile/android/app/src/main/java/com/talk2/BleMeshTransport.java`
+- `mobile/android/app/src/main/java/com/talk2/MeshPacket.java`
+- `mobile/android/app/src/main/java/com/talk2/MeshRouter.java`
+- `mobile/android/app/src/main/java/com/talk2/MeshSendQueue.java`
+- `mobile/android/app/src/main/java/com/talk2/MeshVoiceStore.java`
+- `mobile/android/app/src/main/java/com/talk2/SpeechEngine.java`
+- `mobile/android/app/src/main/java/com/talk2/Talk2Module.java`
+- `mobile/android/app/src/main/java/com/talk2/TranslationEngine.java`
+- `mobile/App.tsx`
+- `mobile/src/MeshVoicePanel.tsx`
+- `mobile/src/RadarPeers.tsx`
+- `mobile/src/TranslatedVoice.tsx`
+- `README.md`
+- `scripts/test-java.ps1`
+- `scripts/test-java.sh`
+- `shared/i18n.cjs`
+- `shared/language-state.cjs`
+- `shared/location.cjs`
+- `shared/stage3-ui.cjs`
+- `tests/MeshRouterTest.java`
+- `tests/MeshVoiceStoreTest.java`
+- `tests/stage3.test.cjs`
+- `tests/stubs/android/security/keystore/KeyGenParameterSpec.java`
+- `tests/stubs/android/security/keystore/KeyProperties.java`
+- `tests/stubs/android/util/AtomicFile.java`
+
+## Stage 3 final validation and handoff (2026-10-31)
+
+Branch: main. Initial commit: f95a6557f584c7cc9de00203cf89a5cb9c0ea9e1.
+Milestone commits: 6d8c835 (3A), b13145e (3B); final implementation hash is
+recorded in the following handoff entry. The exact changed-file list above also
+includes mobile/android/app/build.gradle: shared modules outside the mobile root
+are now declared bundle inputs, preventing stale standalone localization/policy.
+The existing gradle-wrapper.properties change remains uncommitted and untouched.
+
+Final commands and outcomes (PowerShell, repository root):
+
+- `npm run check`: PASS, all 21 Node tests and `tsc --noEmit`. Includes the
+  corrected dynamic Marathi missing-pack message. Catalog diagnostics:
+  `node -e "console.log(require('./shared/i18n.cjs').diagnostics('mr'))"`:
+  270/270, no missing keys. This is dictionary coverage, not screen/device QA.
+- `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-java.ps1`:
+  PASS, SecureChannelTest, ModelStoreTest, VoiceTransferTest, MeshPacketTest,
+  MeshFragmentCodecTest, MeshVoiceStoreTest, MeshRouterTest. JVM stubs do not
+  validate Android Keystore, AtomicFile crash semantics or Bluetooth hardware.
+- Set `GRADLE_USER_HOME` to `mobile/.gradle-stage2-final`, `ANDROID_USER_HOME`
+  to `mobile/.android-stage2`, then ran:
+  `& './mobile/.gradle-stage2/wrapper/dists/gradle-8.13-bin/5xuhj0ry160q40clulazy9h7d/gradle-8.13/bin/gradle.bat' -p mobile/android :app:testDebugUnitTest :app:assembleDebug :app:assembleStandalone --console=plain`.
+  Final build PASS in 49s, 101 tasks (11 executed, 90 up-to-date).
+  Android unit task is NO-SOURCE; the seven JVM harness groups above are the
+  actual Java test evidence. Gradle deprecation and Metro/Hermes warnings remain.
+- `git diff --check`: PASS (line-ending conversion warnings only).
+- `Get-FileHash mobile/android/app/build/outputs/apk/debug/app-debug.apk,mobile/android/app/build/outputs/apk/standalone/app-standalone.apk -Algorithm SHA256`:
+  debug SHA256 17002CF848650B31BEE8AC4F522087D26E25CE048A3F7ACE6773A3E724521DE3,
+  130131598 bytes; standalone SHA256 AC71AA6780FF9ED21187411EE8A1B0F151A4A1E8F0CE41138D78DF85CF1091AE,
+  86547735 bytes.
+- SDK build-tools/34.0.0 `aapt.exe dump badging` on each APK: debug com.talk2.dev,
+  version 1.1.0-dev; standalone com.talk2, version 1.1.0; both versionCode 2.
+  `apksigner.bat verify --print-certs` on final standalone: PASS, Android Debug
+  certificate SHA256 ec9d5ea792facc56dca652bf611dc80a99f18207ea013a6441af5e62cc8d925e.
+  This is a development-signed artifact, not a production release signature.
+- SDK platform-tools/adb.exe `devices -l`: initially empty; at closeout ONE phone
+  appeared, serial 00045349O000672, model A142/product PacmanIND. `shell getprop
+  ro.build.version.release`: 17. No second/third phone or emulator.
+- With ANDROID_USER_HOME and ANDROID_SDK_HOME set to mobile/.android-stage2:
+  `adb -s 00045349O000672 install -r mobile/android/app/build/outputs/apk/standalone/app-standalone.apk`:
+  FAILED: INSTALL_FAILED_UPDATE_INCOMPATIBLE, installed com.talk2 signature differs.
+  No uninstall, data clear, permission grant or launch of an old build was done.
+  Physical startup, microphone/playback, BLE, sensors and model inference remain
+  NOT TESTED. Earlier no-device statements describe earlier milestone snapshots.
+
+Acceptance: 3A bounded public Original transfer and failure cases are implemented
+and JVM protocol-tested, including signed A-B-C simulation without A-C delivery.
+Direct transport code is preserved, but physical direct regression is NOT TESTED.
+3B optional original/transcript/translation/TTS guards are implemented and
+policy-tested; compatible installed neural models were unavailable, so no real
+speech-to-speech success is claimed. See MODEL_HOSTING.md for the full matrix:
+Hindi speech absent, general translation hi<->mr only; Marathi identity speech
+and hi-text-to-mr are reproducible candidate paths once compatible packs exist.
+3C consent/expiry/filter/accuracy rules are implemented and unit-tested; sensor
+accuracy and radio capacity remain unmeasured. Optional Wi-Fi Aware/Nearby is
+DEFERRED for lack of measured justification.
+
+Security: mesh voice/location are explicitly PUBLIC, signed and bounded, not
+private or E2EE. Custody covers a piece; receipt means at least one public receiver
+assembled the note, not read/playback/all recipients. Direct secure transport
+remains separate. Self-declared roles/OTP/mock/unsigned profiles never confer
+verification. Future signed credential/backend work is documentation only.
+
+Remaining limitations and exact next action: obtain an APK signed with the
+phone's existing key, or use a separate test device with no conflicting Talk2
+installation; do not remove user data. Run DEVICE_TESTS.md cards 17-20 with two
+phones then isolated A-B-C, recording the actual build hash, permissions, topology,
+bytes/timestamps/receipts and logs. Install checksum-valid compatible model packs
+and execute the MODEL_HOSTING.md matrix. Validate Marathi screens, foreground BLE
+throughput, disconnect/restart recovery and location/compass behavior on hardware.
+Mesh remains foreground-only; the 3-second public note limit is conservative and
+not a measured delivery guarantee. The user's Gradle wrapper edit is preserved;
+use the explicit 8.13 binary above until its version/checksum mismatch is resolved.
+Stage 3 stops here; no dashboard, live call, Meshtastic or Next.js backend begun.
+
+Final implementation commit: 9a965d7e6234698551c21e9ae66bc22df27692cd on main.
+This following documentation-only checkpoint commit records that immutable source
+hash; APKs above were built from that source before commit creation. No GitHub
+push was performed for Stage 3. Final status preserves the pre-existing modified
+mobile/android/gradle/wrapper/gradle-wrapper.properties. An untracked .vscode/
+directory appeared during closeout and was also left untouched/uncommitted.

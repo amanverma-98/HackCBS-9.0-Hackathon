@@ -155,6 +155,9 @@ const more = {
 };
 Object.assign(en, Object.fromEntries(Object.keys(more).map((key) => [key, key])));
 Object.assign(mr, more);
+const stage3 = require("./stage3-ui.cjs");
+Object.assign(en, Object.fromEntries(Object.keys(stage3).map(key => [key, key])));
+Object.assign(mr, stage3);
 const resources = { en, mr };
 let locale = "en";
 function setLocale(value) { locale = value || "en"; }
@@ -173,6 +176,8 @@ function packProgressLabel(pack, done, total, language) {
 }
 function translate(value, language = locale) {
   if (typeof value !== "string") return value;
+  const missingSpeech = value.match(/^Install ([a-z]{2}) speech pack first$/);
+  if (missingSpeech && language === "mr") return `${missingSpeech[1]} स्पीच पॅक प्रथम स्थापित करा`;
   const welcome = value.match(/^WELCOME TO TALK2 · (\d) OF 3$/);
   if (welcome && language === "mr") return `TALK2 मध्ये आपले स्वागत आहे · ${welcome[1]}/3`;
   return (resources[language] && resources[language][value]) || en[value] || value;
