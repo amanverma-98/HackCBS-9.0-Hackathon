@@ -21,12 +21,7 @@ import {
 } from "react-native";
 import { Native, events, permissions } from "./src/native";
 import { DEFAULT_BACKEND_URL, DEFAULT_MANIFEST_URL } from "./src/config";
-import {
-  LANGUAGES,
-  position,
-  prune,
-  validMessage,
-} from "../shared/core.cjs";
+import { LANGUAGES, position, prune, validMessage } from "../shared/core.cjs";
 import alertData from "../shared/alerts.json";
 import upstream from "../model-host/upstream-manifest.json";
 import { PushToTalk } from "../shared/ptt.cjs";
@@ -47,7 +42,10 @@ const Alert = {
     NativeAlert.alert(
       localized(title),
       localized(message),
-      buttons?.map((button: any) => ({ ...button, text: localized(button.text) })),
+      buttons?.map((button: any) => ({
+        ...button,
+        text: localized(button.text),
+      })),
       options,
     ),
 };
@@ -212,9 +210,17 @@ export default function App() {
     [transport, setTransport] = useState("all"),
     [pairCode, setPairCode] = useState(""),
     [radioStatus, setRadioStatus] = useState("Ready to connect"),
-    [hostingTransport, setHostingTransport] = useState<"wifi" | "bluetooth" | null>(null),
+    [hostingTransport, setHostingTransport] = useState<
+      "wifi" | "bluetooth" | null
+    >(null),
     [connectionState, setConnectionState] = useState<
-      "idle" | "scanning" | "hosting" | "joining" | "pairing" | "connected" | "failed"
+      | "idle"
+      | "scanning"
+      | "hosting"
+      | "joining"
+      | "pairing"
+      | "connected"
+      | "failed"
     >("idle");
   const [packs, setPacks] = useState<Record<string, boolean>>({}),
     packsRef = useRef(packs),
@@ -226,7 +232,9 @@ export default function App() {
     pauseRequested = useRef(""),
     [progress, setProgress] = useState<any>(null);
   const [recording, setRecording] = useState(false),
-    [pttState, setPttState] = useState<"idle" | "arming" | "recording" | "processing">("idle"),
+    [pttState, setPttState] = useState<
+      "idle" | "arming" | "recording" | "processing"
+    >("idle"),
     recordStart = useRef<Promise<void> | null>(null),
     pttPressed = useRef(false),
     recordingRef = useRef(false),
@@ -245,11 +253,16 @@ export default function App() {
     [token, setToken] = useState(""),
     [answer, setAnswer] = useState("");
   const [sirenEnabled, setSirenEnabled] = useState(false);
-  const [sensorStatus, setSensorStatus] = useState("Waiting for a location fix");
+  const [sensorStatus, setSensorStatus] = useState(
+    "Waiting for a location fix",
+  );
   const [voiceCapable, setVoiceCapable] = useState(false);
-  const voicePeer = useRef(false), locationRef = useRef<any>(null);
-  const ptt = useRef<any>(null), maxRecording = useRef<any>(null);
-  const clipLanguage = useRef("hi"), clipMode = useRef("translated");
+  const voicePeer = useRef(false),
+    locationRef = useRef<any>(null);
+  const ptt = useRef<any>(null),
+    maxRecording = useRef<any>(null);
+  const clipLanguage = useRef("hi"),
+    clipMode = useRef("translated");
   const audioBusy = useRef(0);
   const saveChain = useRef(Promise.resolve()),
     receiveChain = useRef(Promise.resolve());
@@ -290,7 +303,8 @@ export default function App() {
     persist(update(patch)).catch((e: any) => setError(e.message));
   };
   const feedback = (kind = "tap") => {
-    if (ref.current.haptics) Native.feedback(kind).catch((e: any) => setError(e.message));
+    if (ref.current.haptics)
+      Native.feedback(kind).catch((e: any) => setError(e.message));
   };
   const run = async (fn: () => Promise<any>, label = "") => {
     setError("");
@@ -329,7 +343,12 @@ export default function App() {
     });
   const status = async (source = manifest || upstream) => {
     const p = JSON.parse(await Native.packStatus(JSON.stringify(source)));
-    const installed = Object.fromEntries(Object.entries(p).map(([code, value]: any) => [code, value.installed === true]));
+    const installed = Object.fromEntries(
+      Object.entries(p).map(([code, value]: any) => [
+        code,
+        value.installed === true,
+      ]),
+    );
     packsRef.current = installed;
     setPacks(installed);
     setPackDetails(p);
@@ -341,20 +360,30 @@ export default function App() {
       ? templates[key][language]
       : undefined;
   async function play(m: Message) {
-    if (ptt.current?.active) throw new Error("Finish recording before playing a message");
+    if (ptt.current?.active)
+      throw new Error("Finish recording before playing a message");
     audioBusy.current++;
     setBusy("Playing speech on this phone…");
     try {
-      if (m.kind === "voice" && m.audioUri) { await Native.playVoice(m.audioUri); return; }
+      if (m.kind === "voice" && m.audioUri) {
+        await Native.playVoice(m.audioUri);
+        return;
+      }
       const target = ref.current.targetTranslation;
       if (ref.current.ttsVoice !== target)
-        throw new Error("Choose the same language for translation target and TTS voice to play translated text.");
+        throw new Error(
+          "Choose the same language for translation target and TTS voice to play translated text.",
+        );
       let spoken = m.template ? phrase(m.template, target) : undefined;
       if (!spoken)
         spoken =
           m.language === ref.current.targetTranslation
             ? m.text
-            : await Native.translate(m.text, m.language, ref.current.targetTranslation);
+            : await Native.translate(
+                m.text,
+                m.language,
+                ref.current.targetTranslation,
+              );
       await Native.speak(spoken, ref.current.ttsVoice);
     } finally {
       audioBusy.current--;
@@ -382,7 +411,10 @@ export default function App() {
       setVoiceCapable(voicePeer.current);
       return;
     }
-    if (m.kind === "position-off") { setPeerLocation(null); return; }
+    if (m.kind === "position-off") {
+      setPeerLocation(null);
+      return;
+    }
     if (m.kind === "position") {
       const p = m.coords;
       if (
@@ -394,7 +426,11 @@ export default function App() {
         Number.isFinite(p.accuracy) &&
         p.accuracy >= 0
       )
-        setPeerLocation({ ...p, time: Date.now() - Math.max(0, Number.isFinite(m.ageMs) ? m.ageMs : 0) });
+        setPeerLocation({
+          ...p,
+          time:
+            Date.now() - Math.max(0, Number.isFinite(m.ageMs) ? m.ageMs : 0),
+        });
       return;
     }
     if (!["text", "alert", "voice"].includes(m.kind)) return;
@@ -417,7 +453,8 @@ export default function App() {
             ? phrase(m.template, ref.current.targetTranslation) || m.text
             : m.text,
         );
-      if (!m.queued && ref.current.autoPlay && !ptt.current?.active) await play(incoming);
+      if (!m.queued && ref.current.autoPlay && !ptt.current?.active)
+        await play(incoming);
     } else await wire({ id: uid(), kind: "ack", ack: m.id, time: Date.now() });
   }
   async function onFloor(m: any) {
@@ -445,7 +482,9 @@ export default function App() {
       if (grant) {
         remoteFloor.current = true;
         clearTimeout(remoteFloorTimer.current);
-        remoteFloorTimer.current = setTimeout(() => { remoteFloor.current = false; }, 60000);
+        remoteFloorTimer.current = setTimeout(() => {
+          remoteFloor.current = false;
+        }, 60000);
         if (requesting.current && floorPromise.current) {
           floorPromise.current.resolve(false);
           floorPromise.current = null;
@@ -529,14 +568,20 @@ export default function App() {
           setPairCode("");
           localFloor.current = false;
           remoteFloor.current = false;
-          voicePeer.current = false; setVoiceCapable(false);
-          if (floorPromise.current) { floorPromise.current.resolve(false); floorPromise.current = null; }
+          voicePeer.current = false;
+          setVoiceCapable(false);
+          if (floorPromise.current) {
+            floorPromise.current.resolve(false);
+            floorPromise.current = null;
+          }
           ptt.current?.cancel();
         }
         if (e.type === "message") {
           if (e.kind === "floor")
             onFloor(e).catch((x: any) => setError(x.message));
-          else if (["position", "position-off", "profile", "ack"].includes(e.kind))
+          else if (
+            ["position", "position-off", "profile", "ack"].includes(e.kind)
+          )
             receive(e).catch((x: any) => setError(x.message));
           else {
             if (e.kind === "alert" && ref.current.sounds) Native.alertTone();
@@ -549,7 +594,9 @@ export default function App() {
         if (e.type === "location") {
           locationRef.current = e;
           setLocation(e);
-          setSensorStatus(`${e.provider || "GPS"} · ±${Math.round(e.accuracy)} m`);
+          setSensorStatus(
+            `${e.provider || "GPS"} · ±${Math.round(e.accuracy)} m`,
+          );
           sendPosition(e)?.catch((x: any) => setError(x.message));
         }
         if (e.type === "download") setProgress(e);
@@ -626,7 +673,12 @@ export default function App() {
       setDownloading("");
     }
   }
-  async function send(content: string, kind = "text", template?: string, language = ref.current.sourceSpeech) {
+  async function send(
+    content: string,
+    kind = "text",
+    template?: string,
+    language = ref.current.sourceSpeech,
+  ) {
     const value = content.trim();
     if (!value) return;
     if (kind === "alert" && !paired.current)
@@ -646,8 +698,16 @@ export default function App() {
     };
     await add(m);
     if (paired.current) {
-      try { await wire(m); }
-      catch (e) { change({messages: ref.current.messages.map(x => x.id === m.id ? {...x,status:"failed"} : x)}); throw e; }
+      try {
+        await wire(m);
+      } catch (e) {
+        change({
+          messages: ref.current.messages.map((x) =>
+            x.id === m.id ? { ...x, status: "failed" } : x,
+          ),
+        });
+        throw e;
+      }
     }
     feedback();
     setText("");
@@ -655,8 +715,14 @@ export default function App() {
   async function retry(m: Message) {
     if (!paired.current) throw new Error("Connect first");
     if (m.kind === "voice") {
-      if (!voicePeer.current) throw new Error("Update Talk2 on both phones for original voice messages");
-      await Native.sendVoice(m.audioUri, JSON.stringify({...m, queued:true}));
+      if (!voicePeer.current)
+        throw new Error(
+          "Update Talk2 on both phones for original voice messages",
+        );
+      await Native.sendVoice(
+        m.audioUri,
+        JSON.stringify({ ...m, queued: true }),
+      );
     } else await wire({ ...m, queued: true });
     change({
       messages: ref.current.messages.map((x) =>
@@ -692,51 +758,106 @@ export default function App() {
     localFloor.current = true;
   }
   async function sendOriginal(uri: string) {
-    const m: Message = { id: uid(), kind: "voice", text: "Voice message", audioUri: uri,
-      language: clipLanguage.current, time: Date.now(), direction: "out",
-      status: paired.current ? "pending" : "queued", queued: !paired.current };
+    const m: Message = {
+      id: uid(),
+      kind: "voice",
+      text: "Voice message",
+      audioUri: uri,
+      language: clipLanguage.current,
+      time: Date.now(),
+      direction: "out",
+      status: paired.current ? "pending" : "queued",
+      queued: !paired.current,
+    };
     await add(m);
     if (paired.current) {
-      if (!voicePeer.current) throw new Error("Update Talk2 on both phones for original voice messages. The clip is saved for retry.");
-      try { await Native.sendVoice(uri, JSON.stringify(m)); }
-      catch (e) { change({messages: ref.current.messages.map(x=>x.id===m.id?{...x,status:"failed"}:x)}); throw e; }
+      if (!voicePeer.current)
+        throw new Error(
+          "Update Talk2 on both phones for original voice messages. The clip is saved for retry.",
+        );
+      try {
+        await Native.sendVoice(uri, JSON.stringify(m));
+      } catch (e) {
+        change({
+          messages: ref.current.messages.map((x) =>
+            x.id === m.id ? { ...x, status: "failed" } : x,
+          ),
+        });
+        throw e;
+      }
     }
     feedback();
   }
-  if (!ptt.current) ptt.current = new PushToTalk({
-    state: (state: any) => {
-      setPttState(state); setRecording(state === "recording"); recordingRef.current = state === "recording";
-      clearTimeout(maxRecording.current);
-      if (state === "recording") { feedback(); maxRecording.current = setTimeout(()=>ptt.current.release(), 20000); }
-      if (state === "processing") setBusy("Processing your voice…");
-      if (state === "idle") setBusy("");
-    },
-    error: (e: any) => { setError(e.message || String(e)); feedback("error"); },
-    prepare: async () => {
-      setError(""); clipLanguage.current = ref.current.sourceSpeech; clipMode.current = ref.current.voiceMode;
-      if (clipMode.current === "translated" && !packsRef.current[clipLanguage.current])
-        throw new Error("Download the active speech pack, or choose Original voice in Settings.");
-      if (clipMode.current === "original" && paired.current && !voicePeer.current)
-        throw new Error("Original voice requires this Talk2 version on both phones.");
-      await permissions("mic");
-    },
-    acquire: acquireFloor,
-    start: () => Native.startRecording(),
-    cancel: () => Native.cancelRecording(),
-    finish: async () => {
-      if (clipMode.current === "original") { const uri = await Native.finishVoice(); await sendOriginal(uri); return; }
-      const recognized = await Native.stopRecording(clipLanguage.current);
-      if (!recognized.trim()) throw new Error("No speech recognized. Try speaking closer to the microphone.");
-      if (ref.current.reviewSpeech) setText(recognized);
-      else await send(recognized, "text", undefined, clipLanguage.current);
-    },
-    release: async () => {
-      requesting.current = false;
-      if (localFloor.current) { localFloor.current = false; if (paired.current) await control("release"); }
-    },
-  });
-  const begin = () => { if (!busy && !audioBusy.current) ptt.current.press(); };
-  const end = () => { ptt.current.release(); };
+  if (!ptt.current)
+    ptt.current = new PushToTalk({
+      state: (state: any) => {
+        setPttState(state);
+        setRecording(state === "recording");
+        recordingRef.current = state === "recording";
+        clearTimeout(maxRecording.current);
+        if (state === "recording") {
+          feedback();
+          maxRecording.current = setTimeout(() => ptt.current.release(), 20000);
+        }
+        if (state === "processing") setBusy("Processing your voice…");
+        if (state === "idle") setBusy("");
+      },
+      error: (e: any) => {
+        setError(e.message || String(e));
+        feedback("error");
+      },
+      prepare: async () => {
+        setError("");
+        clipLanguage.current = ref.current.sourceSpeech;
+        clipMode.current = ref.current.voiceMode;
+        if (
+          clipMode.current === "translated" &&
+          !packsRef.current[clipLanguage.current]
+        )
+          throw new Error(
+            "Download the active speech pack, or choose Original voice in Settings.",
+          );
+        if (
+          clipMode.current === "original" &&
+          paired.current &&
+          !voicePeer.current
+        )
+          throw new Error(
+            "Original voice requires this Talk2 version on both phones.",
+          );
+        await permissions("mic");
+      },
+      acquire: acquireFloor,
+      start: () => Native.startRecording(),
+      cancel: () => Native.cancelRecording(),
+      finish: async () => {
+        if (clipMode.current === "original") {
+          const uri = await Native.finishVoice();
+          await sendOriginal(uri);
+          return;
+        }
+        const recognized = await Native.stopRecording(clipLanguage.current);
+        if (!recognized.trim())
+          throw new Error(
+            "No speech recognized. Try speaking closer to the microphone.",
+          );
+        if (ref.current.reviewSpeech) setText(recognized);
+        else await send(recognized, "text", undefined, clipLanguage.current);
+      },
+      release: async () => {
+        requesting.current = false;
+        if (localFloor.current) {
+          localFloor.current = false;
+          if (paired.current) await control("release");
+        }
+      },
+    });
+  const begin = () => {
+    if (!busy && !audioBusy.current) ptt.current.press();
+  };
+  const end = () => {
+    ptt.current.release();
+  };
   const disconnect = () =>
     run(async () => {
       await Native.disconnect();
@@ -788,49 +909,114 @@ export default function App() {
     emergency_staff: "Emergency staff",
   };
   const verification = onboarding.verificationDisplay(data.role);
-  const option = (icon: string, name: string, detail: string, value: boolean, onChange: (value:boolean)=>void) => (
-    <View style={[s.row, {paddingVertical:8}]}>
-      <Text style={{fontSize:23,color:"#347453",width:34}}>{icon}</Text>
-      <View style={{flex:1}}>{title(name)}{note(detail)}</View>
-      <Switch accessibilityLabel={name} value={value} onValueChange={onChange}
-        trackColor={{false:c.line,true:"#9CD5B2"}} thumbColor={value?"#347453":"#DDD"}/>
+  const option = (
+    icon: string,
+    name: string,
+    detail: string,
+    value: boolean,
+    onChange: (value: boolean) => void,
+  ) => (
+    <View style={[s.row, { paddingVertical: 8 }]}>
+      <Text style={{ fontSize: 23, color: "#347453", width: 34 }}>{icon}</Text>
+      <View style={{ flex: 1 }}>
+        {title(name)}
+        {note(detail)}
+      </View>
+      <Switch
+        accessibilityLabel={name}
+        value={value}
+        onValueChange={onChange}
+        trackColor={{ false: c.line, true: "#9CD5B2" }}
+        thumbColor={value ? "#347453" : "#DDD"}
+      />
     </View>
   );
-  const profilePhoto = () => <>
-    <View style={s.avatar}>
-      {data.photo ? <Image key={data.photo} source={{uri:data.photo}} accessibilityLabel="Your profile photo"
-        style={{width:88,height:88,borderRadius:44}} onError={()=>setError("Photo could not be opened. Choose it again.")}/>
-        : <Text style={{fontSize:32,color:"#347453"}}>{data.name.slice(0,1).toUpperCase()||"T"}</Text>}
-    </View>
-    {button("▣ Choose profile photo",()=>run(async()=>{const uri=await Native.chooseProfilePhoto();if(uri)change({photo:uri});}),true)}
-    {!!data.photo && button("Remove photo",()=>change({photo:""}),true)}
-    {note("Your photo stays on this phone. Only your name is shared with a paired peer.")}
-  </>;
+  const profilePhoto = () => (
+    <>
+      <View style={s.avatar}>
+        {data.photo ? (
+          <Image
+            key={data.photo}
+            source={{ uri: data.photo }}
+            accessibilityLabel="Your profile photo"
+            style={{ width: 88, height: 88, borderRadius: 44 }}
+            onError={() =>
+              setError("Photo could not be opened. Choose it again.")
+            }
+          />
+        ) : (
+          <Text style={{ fontSize: 32, color: "#347453" }}>
+            {data.name.slice(0, 1).toUpperCase() || "T"}
+          </Text>
+        )}
+      </View>
+      {button(
+        "▣ Choose profile photo",
+        () =>
+          run(async () => {
+            const uri = await Native.chooseProfilePhoto();
+            if (uri) change({ photo: uri });
+          }),
+        true,
+      )}
+      {!!data.photo &&
+        button("Remove photo", () => change({ photo: "" }), true)}
+      {note(
+        "Your photo stays on this phone. Only your name is shared with a paired peer.",
+      )}
+    </>
+  );
   const setLocationSharing = (value: boolean) => {
-    change({shareLocation:value});
-    if (value) run(async()=>{await permissions("location");await Native.startSensors();await sendPosition(locationRef.current);});
+    change({ shareLocation: value });
+    if (value)
+      run(async () => {
+        await permissions("location");
+        await Native.startSensors();
+        await sendPosition(locationRef.current);
+      });
     else {
       Native.stopSensors();
-      if(paired.current) wire({id:uid(),kind:"position-off",time:Date.now()}).catch((e:any)=>setError(e.message));
+      if (paired.current)
+        wire({ id: uid(), kind: "position-off", time: Date.now() }).catch(
+          (e: any) => setError(e.message),
+        );
     }
   };
-  const clearHistory = () => Alert.alert("Clear history?", "Deletes messages, unsent drafts in history, and saved voice clips on this phone.",[
-    {text:"Cancel",style:"cancel"}, {text:"Clear",style:"destructive",onPress:()=>run(async()=>{
-      if (audioBusy.current || ptt.current.active) throw new Error("Wait for recording or playback to finish");
-      await persist(update({messages:[]})); await Native.clearVoiceHistory();
-    })}
-  ]);
+  const clearHistory = () =>
+    Alert.alert(
+      "Clear history?",
+      "Deletes messages, unsent drafts in history, and saved voice clips on this phone.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Clear",
+          style: "destructive",
+          onPress: () =>
+            run(async () => {
+              if (audioBusy.current || ptt.current.active)
+                throw new Error("Wait for recording or playback to finish");
+              await persist(update({ messages: [] }));
+              await Native.clearVoiceHistory();
+            }),
+        },
+      ],
+    );
   function languageList() {
     const knownManifest = manifest || upstream;
     return (
       <>
         {label("SPEECH PACKS · DOWNLOAD OPTIONAL")}
-        {langs.map((l) =>
-          {
+        {langs.map((l) => {
           const details = packDetails[l.code] || {};
           const spec = knownManifest.packs?.[l.code];
-          const expectedBytes = details.expectedBytes || spec?.files?.reduce((n: number, f: any) => n + f.bytes, 0) || 0;
-          const downloadedBytes = progress?.pack === l.code ? progress.done : details.partialBytes || 0;
+          const expectedBytes =
+            details.expectedBytes ||
+            spec?.files?.reduce((n: number, f: any) => n + f.bytes, 0) ||
+            0;
+          const downloadedBytes =
+            progress?.pack === l.code
+              ? progress.done
+              : details.partialBytes || 0;
           const pack = packUtils.packStatus({
             code: l.code,
             inManifest: details.available ?? !!spec,
@@ -841,13 +1027,20 @@ export default function App() {
             downloadedBytes,
             expectedBytes,
           });
-          const stateLabel = pack.state === "installed" ? "Installed · checksum verified"
-            : pack.state === "unavailable" ? "Not in this release"
-              : pack.state === "downloading" ? "Downloading"
-                : pack.state === "paused" ? "Paused · resumable"
-                : pack.state === "partial" ? "Partial download · resumable"
-                  : pack.state === "failed" ? "Download failed · retry available"
-                    : "Available offline · not installed";
+          const stateLabel =
+            pack.state === "installed"
+              ? "Installed · checksum verified"
+              : pack.state === "unavailable"
+                ? "Not in this release"
+                : pack.state === "downloading"
+                  ? "Downloading"
+                  : pack.state === "paused"
+                    ? "Paused · resumable"
+                    : pack.state === "partial"
+                      ? "Partial download · resumable"
+                      : pack.state === "failed"
+                        ? "Download failed · retry available"
+                        : "Available offline · not installed";
           return card(
             <>
               <View style={s.row}>
@@ -859,7 +1052,15 @@ export default function App() {
                 </View>
                 {note(stateLabel)}
               </View>
-              {expectedBytes > 0 && note(i18n.packProgressLabel(l.code, downloadedBytes, expectedBytes, data.ui))}
+              {expectedBytes > 0 &&
+                note(
+                  i18n.packProgressLabel(
+                    l.code,
+                    downloadedBytes,
+                    expectedBytes,
+                    data.ui,
+                  ),
+                )}
               <View style={s.row}>
                 <View style={{ flex: 1 }}>
                   {button(
@@ -898,20 +1099,33 @@ export default function App() {
                                   x.code !== l.code && packsRef.current[x.code],
                               );
                               if (data.sourceSpeech === l.code)
-                                change({ sourceSpeech: remaining?.code || "mr" });
-
+                                change({
+                                  sourceSpeech: remaining?.code || "mr",
+                                });
                             }),
                         },
                       ]),
                     true,
                   )}
-                {!packs[l.code] && downloadedBytes > 0 &&
+                {!packs[l.code] &&
+                  downloadedBytes > 0 &&
                   button(
                     "Remove partial files",
-                    () => Alert.alert("Remove partial download?", l.name, [
-                      { text: "Cancel" },
-                      { text: "Remove", style: "destructive", onPress: () => run(async () => { await Native.removePack(l.code); setDownloadPaused(""); setDownloadError(""); await status(); }) },
-                    ]),
+                    () =>
+                      Alert.alert("Remove partial download?", l.name, [
+                        { text: "Cancel" },
+                        {
+                          text: "Remove",
+                          style: "destructive",
+                          onPress: () =>
+                            run(async () => {
+                              await Native.removePack(l.code);
+                              setDownloadPaused("");
+                              setDownloadError("");
+                              await status();
+                            }),
+                        },
+                      ]),
                     true,
                     !!downloading,
                   )}
@@ -919,27 +1133,77 @@ export default function App() {
             </>,
             l.code,
           );
-          },
-        )}
+        })}
         {card(
           <>
             {title("Shared translation")}
             {note(
               "Encoder, decoder and vocabulary. General translation enabled for Hindi ↔ Marathi. Other pairs need validated preprocessing/models.",
             )}
-            {note(packDetails.translation?.installed ? "Installed · checksum verified" : downloadPaused === "translation" ? "Paused · resumable" : downloadError === "translation" ? "Download failed · retry available" : "Available offline · not installed")}
-            {packDetails.translation?.expectedBytes > 0 && note(i18n.packProgressLabel("translation", progress?.pack === "translation" ? progress.done : packDetails.translation.partialBytes || 0, packDetails.translation.expectedBytes, data.ui))}
+            {note(
+              packDetails.translation?.installed
+                ? "Installed · checksum verified"
+                : downloadPaused === "translation"
+                  ? "Paused · resumable"
+                  : downloadError === "translation"
+                    ? "Download failed · retry available"
+                    : "Available offline · not installed",
+            )}
+            {packDetails.translation?.expectedBytes > 0 &&
+              note(
+                i18n.packProgressLabel(
+                  "translation",
+                  progress?.pack === "translation"
+                    ? progress.done
+                    : packDetails.translation.partialBytes || 0,
+                  packDetails.translation.expectedBytes,
+                  data.ui,
+                ),
+              )}
             {button(
-              packs.translation ? "Installed" : downloadError === "translation" ? "Retry translation download" : "Download translation",
+              packs.translation
+                ? "Installed"
+                : downloadError === "translation"
+                  ? "Retry translation download"
+                  : "Download translation",
               () => run(() => install("translation")),
               false,
-              !!downloading || !!packs.translation || !packDetails.translation?.available,
+              !!downloading ||
+                !!packs.translation ||
+                !packDetails.translation?.available,
             )}
-            {packs.translation && button("Remove", () => Alert.alert("Remove pack?", "Shared translation", [
-              { text: "Cancel" },
-              { text: "Remove", style: "destructive", onPress: () => run(async () => { await Native.removePack("translation"); await status(); }) },
-            ]), true)}
-            {!packs.translation && packDetails.translation?.partialBytes > 0 && button("Remove partial files", () => run(async () => { await Native.removePack("translation"); setDownloadPaused(""); setDownloadError(""); await status(); }), true, !!downloading)}
+            {packs.translation &&
+              button(
+                "Remove",
+                () =>
+                  Alert.alert("Remove pack?", "Shared translation", [
+                    { text: "Cancel" },
+                    {
+                      text: "Remove",
+                      style: "destructive",
+                      onPress: () =>
+                        run(async () => {
+                          await Native.removePack("translation");
+                          await status();
+                        }),
+                    },
+                  ]),
+                true,
+              )}
+            {!packs.translation &&
+              packDetails.translation?.partialBytes > 0 &&
+              button(
+                "Remove partial files",
+                () =>
+                  run(async () => {
+                    await Native.removePack("translation");
+                    setDownloadPaused("");
+                    setDownloadError("");
+                    await status();
+                  }),
+                true,
+                !!downloading,
+              )}
           </>,
         )}
       </>
@@ -1037,7 +1301,11 @@ export default function App() {
         ]}
       >
         <Text style={{ color: "#FFF", fontSize: 28 }}>
-          {pttState === "recording" ? "■" : pttState === "processing" ? "…" : "●"}
+          {pttState === "recording"
+            ? "■"
+            : pttState === "processing"
+              ? "…"
+              : "●"}
         </Text>
         <Text style={{ color: "#FFF", fontWeight: "700" }}>
           {pttState === "recording"
@@ -1108,10 +1376,17 @@ export default function App() {
               {note("Your name is shared only with a paired phone.")}
               {title("Choose your role")}
               {Object.entries(roleLabels).map(([role, roleText]) =>
-                button(roleText, () => change({ role }), data.role !== role, false),
+                button(
+                  roleText,
+                  () => change({ role }),
+                  data.role !== role,
+                  false,
+                ),
               )}
               {data.role === "emergency_staff" &&
-                note("Unverified emergency staff. Role verification is not available yet. You can skip future email OTP and continue without internet.")}
+                note(
+                  "Unverified emergency staff. Role verification is not available yet. You can skip future email OTP and continue without internet.",
+                )}
             </>,
           )
         ) : step === 1 ? (
@@ -1137,7 +1412,9 @@ export default function App() {
               {[
                 "en",
                 "mr",
-                ...langs.map((l) => l.code).filter((code) => code !== "en" && code !== "mr"),
+                ...langs
+                  .map((l) => l.code)
+                  .filter((code) => code !== "en" && code !== "mr"),
               ].map((code) => (
                 <Button
                   key={code}
@@ -1299,9 +1576,15 @@ export default function App() {
           <>
             {field(text, setText, "Type a message or hold to talk", true)}
             {note(
-              data.voiceMode === "original" ? "Original voice · release to send · no language model needed" : data.reviewSpeech ? "Translated speech · release to review the transcript" : "Translated speech · release to send; your peer hears their selected language",
+              data.voiceMode === "original"
+                ? "Original voice · release to send · no language model needed"
+                : data.reviewSpeech
+                  ? "Translated speech · release to review the transcript"
+                  : "Translated speech · release to send; your peer hears their selected language",
             )}
-            {note(`Active: ${langs.find(l=>l.code===data.sourceSpeech)?.name} · ${connected ? (voiceCapable ? "Peer supports original voice" : "Peer uses text/speech protocol") : "Offline clips are saved for retry"}`)}
+            {note(
+              `Active: ${langs.find((l) => l.code === data.sourceSpeech)?.name} · ${connected ? (voiceCapable ? "Peer supports original voice" : "Peer uses text/speech protocol") : "Offline clips are saved for retry"}`,
+            )}
             {mic}
             {button(
               connected ? "Send message" : "Save for later",
@@ -1344,7 +1627,15 @@ export default function App() {
                 : "Waiting for a GPS fix",
             )}
             {note(sensorStatus)}
-            {note(!connected ? "Pair both phones to see peer distance." : !peerLocation ? "Ask your peer to enable location sharing." : !fresh ? "Location is stale. Move outdoors or refresh location on both phones." : "Live peer coordinates received over the encrypted radio link.")}
+            {note(
+              !connected
+                ? "Pair both phones to see peer distance."
+                : !peerLocation
+                  ? "Ask your peer to enable location sharing."
+                  : !fresh
+                    ? "Location is stale. Move outdoors or refresh location on both phones."
+                    : "Live peer coordinates received over the encrypted radio link.",
+            )}
           </>,
         )}
         <View
@@ -1366,10 +1657,18 @@ export default function App() {
             />
           ))}
           {connected && (
-            <View style={[s.distanceBadge, s.radarDistance, { borderColor: c.line }]}>
+            <View
+              style={[
+                s.distanceBadge,
+                s.radarDistance,
+                { borderColor: c.line },
+              ]}
+            >
               <Text style={{ color: c.muted, fontSize: 11 }}>DISTANCE</Text>
               <Text style={[s.distanceValue, { color: c.ink }]}>
-                {radarDistance === null ? "--" : `${Math.round(radarDistance)} m`}
+                {radarDistance === null
+                  ? "--"
+                  : `${Math.round(radarDistance)} m`}
               </Text>
             </View>
           )}
@@ -1389,7 +1688,13 @@ export default function App() {
               },
             ]}
           >
-            <Text style={{ color: sirenEnabled ? "#FFF" : c.muted, fontSize: 12, fontWeight: "700" }}>
+            <Text
+              style={{
+                color: sirenEnabled ? "#FFF" : c.muted,
+                fontSize: 12,
+                fontWeight: "700",
+              }}
+            >
               {sirenEnabled ? "Siren ON · 20 m" : "Siren OFF"}
             </Text>
           </Pressable>
@@ -1559,18 +1864,26 @@ export default function App() {
             )}
             {note(verification.label)}
             {data.role === "emergency_staff" &&
-              note("Email control or role selection does not verify employment. A signed organization credential is not configured.")}
+              note(
+                "Email control or role selection does not verify employment. A signed organization credential is not configured.",
+              )}
           </>,
         )}
         {card(
           <>
-            {button("◉ Languages & offline downloads", () => setRoute("languages"), true)}
+            {button(
+              "◉ Languages & offline downloads",
+              () => setRoute("languages"),
+              true,
+            )}
             {label("UI language")}
             <View style={s.row}>
               {[
                 "en",
                 "mr",
-                ...langs.map((l) => l.code).filter((code) => code !== "en" && code !== "mr"),
+                ...langs
+                  .map((l) => l.code)
+                  .filter((code) => code !== "en" && code !== "mr"),
               ].map((code) => (
                 <Button
                   key={code}
@@ -1599,12 +1912,38 @@ export default function App() {
         {card(
           <>
             {label("Source speech")}
-            <ScrollView horizontal>{langs.map((l) => button(l.native, () => change({ sourceSpeech: l.code }), data.sourceSpeech !== l.code))}</ScrollView>
+            <ScrollView horizontal>
+              {langs.map((l) =>
+                button(
+                  l.native,
+                  () => change({ sourceSpeech: l.code }),
+                  data.sourceSpeech !== l.code,
+                ),
+              )}
+            </ScrollView>
             {label("Translation target")}
-            <ScrollView horizontal>{langs.map((l) => button(l.native, () => change({ targetTranslation: l.code }), data.targetTranslation !== l.code))}</ScrollView>
+            <ScrollView horizontal>
+              {langs.map((l) =>
+                button(
+                  l.native,
+                  () => change({ targetTranslation: l.code }),
+                  data.targetTranslation !== l.code,
+                ),
+              )}
+            </ScrollView>
             {label("TTS voice")}
-            <ScrollView horizontal>{langs.map((l) => button(l.native, () => change({ ttsVoice: l.code }), data.ttsVoice !== l.code))}</ScrollView>
-            {note("Speech recognition and voice synthesis need their matching installed speech packs. Match TTS voice to translation target for playback. General model translation supports Hindi ↔ Marathi only.")}
+            <ScrollView horizontal>
+              {langs.map((l) =>
+                button(
+                  l.native,
+                  () => change({ ttsVoice: l.code }),
+                  data.ttsVoice !== l.code,
+                ),
+              )}
+            </ScrollView>
+            {note(
+              "Speech recognition and voice synthesis need their matching installed speech packs. Match TTS voice to translation target for playback. General model translation supports Hindi ↔ Marathi only.",
+            )}
           </>,
         )}
         {card(
@@ -1612,24 +1951,85 @@ export default function App() {
             {label("◉ VOICE & FEEDBACK")}
             {note("Choose how the microphone sends a message.")}
             <View style={s.row}>
-              {button("Translated speech",()=>change({voiceMode:"translated"}),data.voiceMode!=="translated",pttState!=="idle")}
-              {button("Original voice",()=>change({voiceMode:"original"}),data.voiceMode!=="original",pttState!=="idle")}
+              {button(
+                "Translated speech",
+                () => change({ voiceMode: "translated" }),
+                data.voiceMode !== "translated",
+                pttState !== "idle",
+              )}
+              {button(
+                "Original voice",
+                () => change({ voiceMode: "original" }),
+                data.voiceMode !== "original",
+                pttState !== "idle",
+              )}
             </View>
-            {option("✓","Review transcript","Review recognized words before sending translated speech",data.reviewSpeech,v=>change({reviewSpeech:v}))}
-            {option("▶","Play received messages","Automatically play new speech and voice clips",data.autoPlay,v=>change({autoPlay:v}))}
-            {option("≈","Vibration","Recording, sending, and incoming-message feedback",data.haptics,v=>change({haptics:v}))}
-            {option("♪","Alert sounds","Use the phone's current notification/alarm volume",data.sounds,v=>change({sounds:v}))}
-            {button("Test vibration",()=>run(async()=>{const ok=await Native.feedback("message");if(!ok)throw new Error("This device has no vibrator");}),true)}
-            {button("Test alert sound",()=>Native.alertTone(),true)}
+            {option(
+              "✓",
+              "Review transcript",
+              "Review recognized words before sending translated speech",
+              data.reviewSpeech,
+              (v) => change({ reviewSpeech: v }),
+            )}
+            {option(
+              "▶",
+              "Play received messages",
+              "Automatically play new speech and voice clips",
+              data.autoPlay,
+              (v) => change({ autoPlay: v }),
+            )}
+            {option(
+              "≈",
+              "Vibration",
+              "Recording, sending, and incoming-message feedback",
+              data.haptics,
+              (v) => change({ haptics: v }),
+            )}
+            {option(
+              "♪",
+              "Alert sounds",
+              "Use the phone's current notification/alarm volume",
+              data.sounds,
+              (v) => change({ sounds: v }),
+            )}
+            {button(
+              "Test vibration",
+              () =>
+                run(async () => {
+                  const ok = await Native.feedback("message");
+                  if (!ok) throw new Error("This device has no vibrator");
+                }),
+              true,
+            )}
+            {button("Test alert sound", () => Native.alertTone(), true)}
           </>,
         )}
         {card(
           <>
             {label("⌖ LOCATION & PRIVACY")}
-            {option("⌖","Share my location","Only with the paired phone while Talk2 is open",data.shareLocation,setLocationSharing)}
-            {option("♬","Nearby peer cue","One cue when a live GPS distance enters 20 m; GPS is approximate",sirenEnabled,v=>{setSirenEnabled(v);change({sirenEnabled:v});})}
-            {button("Open Android permissions",()=>Linking.openSettings(),true)}
-            {button("Clear local history & voice files",clearHistory,true)}
+            {option(
+              "⌖",
+              "Share my location",
+              "Only with the paired phone while Talk2 is open",
+              data.shareLocation,
+              setLocationSharing,
+            )}
+            {option(
+              "♬",
+              "Nearby peer cue",
+              "One cue when a live GPS distance enters 20 m; GPS is approximate",
+              sirenEnabled,
+              (v) => {
+                setSirenEnabled(v);
+                change({ sirenEnabled: v });
+              },
+            )}
+            {button(
+              "Open Android permissions",
+              () => Linking.openSettings(),
+              true,
+            )}
+            {button("Clear local history & voice files", clearHistory, true)}
           </>,
         )}
         {card(
@@ -1660,7 +2060,11 @@ export default function App() {
               "https://your-talk2-server.example",
             )}
             {button("✦ Ask GPT (online)", () => setRoute("gpt"), true)}
-            {button("▥ Performance & diagnostics", () => setRoute("analysis"), true)}
+            {button(
+              "▥ Performance & diagnostics",
+              () => setRoute("analysis"),
+              true,
+            )}
           </>,
         )}
         {card(
@@ -1718,10 +2122,20 @@ export default function App() {
         <View style={s.download}>
           <Text style={{ color: c.ink, flex: 1 }}>
             {progress
-              ? i18n.packProgressLabel(progress.pack, progress.done, progress.total, data.ui)
+              ? i18n.packProgressLabel(
+                  progress.pack,
+                  progress.done,
+                  progress.total,
+                  data.ui,
+                )
               : "Preparing download…"}
           </Text>
-          <Pressable onPress={() => { pauseRequested.current = downloading; Native.cancelDownload(); }}>
+          <Pressable
+            onPress={() => {
+              pauseRequested.current = downloading;
+              Native.cancelDownload();
+            }}
+          >
             <Text style={{ color: "#B84A29" }}>Cancel download</Text>
           </Pressable>
         </View>
@@ -1782,8 +2196,25 @@ export default function App() {
           <View style={[s.sheet, { backgroundColor: c.bg }]}>
             <ScrollView>
               <Text style={[s.hero, { color: c.ink }]}>Connect nearby.</Text>
-              <View style={[s.connectionBanner, { backgroundColor: c.card, borderColor: c.line }]}>
-                <View style={[s.stateDot, { backgroundColor: connectionState === "connected" ? "#2BAA72" : connectionState === "failed" ? "#D35D5D" : "#2D8DD0" }]} />
+              <View
+                style={[
+                  s.connectionBanner,
+                  { backgroundColor: c.card, borderColor: c.line },
+                ]}
+              >
+                <View
+                  style={[
+                    s.stateDot,
+                    {
+                      backgroundColor:
+                        connectionState === "connected"
+                          ? "#2BAA72"
+                          : connectionState === "failed"
+                            ? "#D35D5D"
+                            : "#2D8DD0",
+                    },
+                  ]}
+                />
                 <View style={{ flex: 1 }}>
                   <Text style={{ color: c.ink, fontWeight: "700" }}>
                     {connectionState === "scanning"
@@ -1818,7 +2249,9 @@ export default function App() {
                 ))}
               </View>
               {button(
-                connectionState === "scanning" ? "Scanning…" : "Scan for phones",
+                connectionState === "scanning"
+                  ? "Scanning…"
+                  : "Scan for phones",
                 () =>
                   run(async () => {
                     setConnectionState("scanning");
@@ -1845,7 +2278,9 @@ export default function App() {
                   hostingTransport !== null,
                 )}
                 {button(
-                  hostingTransport === "bluetooth" ? "Hosting Bluetooth…" : "Host Bluetooth",
+                  hostingTransport === "bluetooth"
+                    ? "Hosting Bluetooth…"
+                    : "Host Bluetooth",
                   () =>
                     run(async () => {
                       setConnectionState("hosting");
@@ -1869,7 +2304,9 @@ export default function App() {
                   onPress={() =>
                     run(async () => {
                       setConnectionState("joining");
-                      setRadioStatus(`Connecting to ${p.name || "Talk2 phone"}…`);
+                      setRadioStatus(
+                        `Connecting to ${p.name || "Talk2 phone"}…`,
+                      );
                       await Native.join(p.transport, p.id);
                     })
                   }
