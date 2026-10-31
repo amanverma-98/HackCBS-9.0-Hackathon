@@ -205,3 +205,80 @@ voice-note transfer over a physically proven mesh, preserve the direct voice pat
 and retain the signed-role verification boundary. Do not start Stage 3 before
 Stage 2 commit and physical mesh evidence or an explicit decision to proceed with
 those tests still pending.
+
+## Stage 3 entry assessment (before source edits)
+
+- Baseline: main at f95a6557f584c7cc9de00203cf89a5cb9c0ea9e1. The sole existing
+  edit is mobile/android/gradle/wrapper/gradle-wrapper.properties (9.7.1 URL with
+  8.13 checksum); preserve and exclude it. No AGENTS.md found in the checkout.
+- Stage 2 implements signed v1 text, sos, custody and ack packets, four-hop TTL,
+  24-hour expiry validation, three BLE neighbors, 16-entry AtomicFile queues,
+  fragmentation and origin signatures. Tests cover envelope integrity/bounds and
+  fragmentation. No two/three-phone physical result exists. adb enumeration initially
+  failed on the environment's unwritable .android directory; device presence is not established.
+- Mesh bodies are public, not E2EE. Signatures bind device keys, not people or roles.
+  Mutable hop fields are not signed. Custody is not destination delivery. ACK
+  targeting, queue expiry and bulk scheduling need narrow repairs for voice.
+- Direct PeerRadio still uses authenticated SecureChannel over Classic RFCOMM or
+  Wi-Fi Direct TCP. VoiceTransfer handles 16 kHz mono PCM, up to 20 seconds, local
+  files and sequential direct frames. SpeechEngine.start/stop, VoiceTransfer.save/read,
+  native playVoice, SpeechEngine.transcribe/speak and TranslationEngine.translate
+  are reusable. Direct mode will remain separate from public mesh broadcast.
+- Manifest: nine speech packs (ta,bn,gu,mr,kn,ml,te,or,en), no Hindi pack; shared
+  translation accepts only hi <-> mr. No local ONNX weights found in the checkout;
+  installed device packs and actual inference cannot yet be claimed. STT normalizes
+  16 kHz PCM into a single-input CTC graph; TTS requires single-input MMS-VITS;
+  translation feeds input_ids/attention_mask and decoder_input_ids/
+  encoder_hidden_states/encoder_attention_mask. Actual weights require inspection.
+- Radar currently uses one paired-peer location separately from its filtered list;
+  no mesh location store exists. Freshness checks lack full accuracy/range checks.
+- Planned edits: mesh voice protocol/storage/scheduling/tests; minimal packet/router/
+  BLE priority fixes; bridge and UI for explicit public notes, transcript and states;
+  shared language/location policy and tests; Marathi catalog; reference/license,
+  model, architecture, verification and physical-test documentation. Original voice
+  must remain independent of models/internet. No optional transport without measurements.
+
+## Milestone 3A checkpoint
+
+Implemented public broadcast Original voice in MeshPacket v1 (new voice body
+schema v1), existing BLE transport/router, recording and playback. Explicit
+confirmation states audio/transcripts are readable by relays. No private mesh
+or E2EE claim. Direct PeerRadio/VoiceTransfer remain unchanged.
+
+Limits: 3 seconds / 96,000 bytes 16 kHz mono PCM; 512-byte pieces, maximum 188;
+2 outgoing / 6 active total / 32 retained records; 4 MiB spool; 30-minute expiry;
+3 automatic whole-note rounds with 30-second gaps and one packet per second.
+Metadata precedes allocation. Piece files and AtomicFile records support restart,
+missing/out-of-order/duplicate pieces, integrity validation, signed-origin cancel,
+cleanup, and separate custody/recipient receipts. Relay spool retains original
+signed envelopes; relay receipt does not erase onward delivery data. Recipient
+receipt means at least one public receiver durably saved the note, not all phones.
+
+Narrow Stage 2 repairs: custody replies go to ingress (previously skipped it),
+addressed custody checks, directed text ACK source matching, expired queue cleanup,
+last-hop handling, reserved bulk capacity, and priority BLE packet queues. SOS
+preempts queued bulk after the active packet completes; fragments are not interleaved.
+
+Files: MeshVoiceStore.java, MeshSendQueue.java, MeshPacket.java, MeshRouter.java,
+BleMeshTransport.java, Talk2Module.java, SpeechEngine.java; mobile/App.tsx,
+mobile/src/MeshVoicePanel.tsx; shared/i18n.cjs, shared/stage3-ui.cjs;
+tests/MeshVoiceStoreTest.java, tests/stubs/android/util/AtomicFile.java;
+scripts/test-java.ps1 and scripts/test-java.sh; this checkpoint.
+
+Checks:
+- powershell -ExecutionPolicy Bypass -File scripts/test-java.ps1: PASS all six
+  harnesses, including direct maximum clip/order/hash/path regression and mesh
+  validation/restart/duplicates/missing/hash/expiry/cancel/receipt/SOS priority.
+  Signed A-B-C protocol simulation passes without an A-C delivery path; no radios
+  or Android playback involved in this JVM simulation.
+- npm run check: PASS, 17 Node tests and TypeScript.
+- Gradle 8.13 binary and workspace cache command recorded in Stage 2 above, with
+  -p mobile/android :app:assembleDebug --console=plain: BUILD SUCCESSFUL in 13s,
+  49 tasks (7 executed). Existing wrapper edit preserved. SDK access required
+  an elevated tool call in this environment.
+- adb devices -l (ANDROID_USER_HOME and ANDROID_SDK_HOME set to
+  mobile/.android-stage2): empty device list. Physical direct voice, two-phone
+  BLE voice, three-phone relay, playback and OEM behavior: NOT TESTED.
+
+Next milestone: add receiver transcript translation/TTS with explicit pack and
+language checks, preserving the original audio on every failure.

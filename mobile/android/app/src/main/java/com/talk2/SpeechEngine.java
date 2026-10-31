@@ -10,7 +10,9 @@ public final class SpeechEngine {
  private final ModelStore store;
  private volatile boolean recording;private AudioRecord mic;private Thread capture;private ByteArrayOutputStream pcm;private volatile String captureError;
  SpeechEngine(ModelStore s){store=s;}
- synchronized void start()throws Exception{
+ synchronized void start()throws Exception{start(640000);}
+ synchronized void start(int limit)throws Exception{
+  if(limit<6400||limit>640000)throw new IOException("Invalid capture limit");
   if(mic!=null)throw new IOException("Already recording");int min=AudioRecord.getMinBufferSize(16000,AudioFormat.CHANNEL_IN_MONO,AudioFormat.ENCODING_PCM_16BIT);
   if(min<=0)throw new IOException("16 kHz microphone capture unavailable");
   mic=new AudioRecord(MediaRecorder.AudioSource.VOICE_RECOGNITION,16000,AudioFormat.CHANNEL_IN_MONO,AudioFormat.ENCODING_PCM_16BIT,Math.max(min,6400));
@@ -19,7 +21,7 @@ public final class SpeechEngine {
   try{mic.startRecording();if(mic.getRecordingState()!=AudioRecord.RECORDSTATE_RECORDING)throw new IOException("Microphone did not start");}
   catch(Exception e){mic.release();mic=null;throw e;}
   recording=true;final AudioRecord source=mic;final ByteArrayOutputStream buffer=pcm;
-  capture=new Thread(()->{try{byte[] b=new byte[3200];while(recording&&buffer.size()<640000){int n=source.read(b,0,Math.min(b.length,640000-buffer.size()));if(n>0)buffer.write(b,0,n);else if(n<0){if(recording)captureError="AudioRecord error "+n;break;}}}catch(Exception e){if(recording)captureError=e.getMessage();}finally{recording=false;}},"Talk2-mic");capture.start();
+  capture=new Thread(()->{try{byte[] b=new byte[3200];while(recording&&buffer.size()<limit){int n=source.read(b,0,Math.min(b.length,limit-buffer.size()));if(n>0)buffer.write(b,0,n);else if(n<0){if(recording)captureError="AudioRecord error "+n;break;}}}catch(Exception e){if(recording)captureError=e.getMessage();}finally{recording=false;}},"Talk2-mic");capture.start();
  }
  synchronized byte[] stop()throws Exception{
   if(mic==null)throw new IOException("No recording");recording=false;

@@ -19,6 +19,7 @@ import {
   View,
   useColorScheme,
 } from "react-native";
+import { MeshVoicePanel } from "./src/MeshVoicePanel";
 import { Native, Mesh, events, permissions } from "./src/native";
 import { DEFAULT_BACKEND_URL, DEFAULT_MANIFEST_URL } from "./src/config";
 import { LANGUAGES, position, prune, validMessage } from "../shared/core.cjs";
@@ -62,6 +63,9 @@ type Message = {
   name?: string;
   audioUri?: string;
   durationMs?: number;
+  mesh?: boolean;
+  transcript?: string;
+  recipient?: string;
 };
 type Settings = {
   settingsVersion: number;
@@ -547,6 +551,10 @@ export default function App() {
           setRadioStatus(e.message || "Connection failed");
         }
         if (e.type === "voiceError") setError(e.message);
+        if (e.type === "meshVoice") receiveChain.current = receiveChain.current.catch(() => {}).then(async () => {
+          if (!ref.current.messages.some(m => m.id === e.id && m.direction === "in")) await add({ id: e.id, kind: "voice", text: e.transcript || "Public voice note", transcript: e.transcript, language: e.language, time: e.created, direction: "in", status: "received", mesh: true, audioUri: e.audioUri, durationMs: e.durationMs, name: e.sender.slice(0, 8) });
+        }).catch((x: any) => setError(x.message));
+        if (e.type === "meshVoiceStatus") change({ messages: ref.current.messages.map(m => m.id === e.id && m.mesh ? { ...m, status: e.status, recipient: e.recipient } : m) });
         if (e.type === "meshNeighbor") setMeshPeers((old) => e.connected ? (old.includes(e.id) ? old : [...old, e.id]) : old.filter((id) => id !== e.id));
         if (e.type === "meshError") setError(e.message || "BLE mesh error");
         if (e.type === "meshStopped") { setMeshActive(false); setMeshPeers([]); }
@@ -1253,7 +1261,7 @@ export default function App() {
           card(
             <>
               {note(
-                `${m.direction === "out" ? "You" : m.name || "Peer"} · ${m.language === "und" ? i18n.translate("Language unknown", activeUi) : m.language.toUpperCase()} · ${new Date(m.time).toLocaleTimeString()} · ${m.status}`,
+                `${m.direction === "out" ? "You" : m.name || "Peer"} · ${m.language === "und" ? i18n.translate("Language unknown", activeUi) : m.language.toUpperCase()} · ${new Date(m.time).toLocaleTimeString()} · ${i18n.translate(m.status, activeUi)}`,
               )}
               <Text selectable style={[s.message, { color: c.ink }]}>
                 {m.template
@@ -1802,6 +1810,9 @@ export default function App() {
         {card(
           <>
             {title("BLE text & SOS mesh")}
+            <MeshVoicePanel active={meshActive} source={data.sourceSpeech} ui={activeUi} onSent={async (id, uri, language, transcript) => {
+              await add({ id, kind: "voice", text: transcript || "Public voice note", transcript, language, time: Date.now(), direction: "out", status: "queued", mesh: true, audioUri: uri });
+            }} />
             {note("Separate from paired chat. Nearby phones can read relayed text; packet signatures identify the sender but do not encrypt its contents. Keep private details out of mesh messages.")}
             {button(meshActive ? "Stop BLE mesh" : "Start BLE mesh", () => run(async () => {
               if (meshActive) { Mesh.stop(); setMeshActive(false); setMeshPeers([]); return; }

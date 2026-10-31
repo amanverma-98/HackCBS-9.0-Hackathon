@@ -155,6 +155,9 @@ const more = {
 };
 Object.assign(en, Object.fromEntries(Object.keys(more).map((key) => [key, key])));
 Object.assign(mr, more);
+const stage3 = require("./stage3-ui.cjs");
+Object.assign(en, Object.fromEntries(Object.keys(stage3).map(key => [key, key])));
+Object.assign(mr, stage3);
 const resources = { en, mr };
 let locale = "en";
 function setLocale(value) { locale = value || "en"; }
