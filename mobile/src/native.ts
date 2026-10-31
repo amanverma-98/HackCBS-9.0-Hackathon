@@ -4,6 +4,7 @@ import {
   PermissionsAndroid,
   Platform,
 } from "react-native";
+
 export const Native = NativeModules.Talk2Native;
 export const events = new NativeEventEmitter(Native);
 export const Mesh = {
