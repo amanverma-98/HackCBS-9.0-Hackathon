@@ -1,3 +1,7 @@
+# HackCBS-9.0-Hackathon
+
+This is the README for hackcbs hackathon.
+
 # Talk2
 
 Talk2 is an Android peer-to-peer communication app with a React Native interface,
