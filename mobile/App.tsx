@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import {
-  Alert,
+  Alert as NativeAlert,
   Animated,
   AppState,
   Easing,
@@ -14,7 +14,7 @@ import {
   StatusBar,
   StyleSheet,
   Switch,
-  Text,
+  Text as NativeText,
   TextInput,
   View,
   useColorScheme,
@@ -30,6 +30,27 @@ import {
 import alertData from "../shared/alerts.json";
 import upstream from "../model-host/upstream-manifest.json";
 import { PushToTalk } from "../shared/ptt.cjs";
+const onboarding = require("../shared/onboarding.cjs");
+const i18n = require("../shared/i18n.cjs");
+const packUtils = require("../shared/model-packs.cjs");
+let activeUi = "en";
+function localized(value: any): any {
+  if (typeof value === "string") return i18n.translate(value, activeUi);
+  if (Array.isArray(value)) return value.map(localized);
+  return value;
+}
+function Text(props: any) {
+  return <NativeText {...props}>{localized(props.children)}</NativeText>;
+}
+const Alert = {
+  alert: (title: string, message?: string, buttons?: any, options?: any) =>
+    NativeAlert.alert(
+      localized(title),
+      localized(message),
+      buttons?.map((button: any) => ({ ...button, text: localized(button.text) })),
+      options,
+    ),
+};
 type Message = {
   id: string;
   kind: string;
@@ -45,10 +66,15 @@ type Message = {
   durationMs?: number;
 };
 type Settings = {
+  settingsVersion: number;
   setup: boolean;
   name: string;
   deviceId: string;
-  current: string;
+  role: string;
+  verificationStatus: "unverified";
+  sourceSpeech: string;
+  targetTranslation: string;
+  ttsVoice: string;
   ui: string;
   theme: string;
   manifestUrl: string;
@@ -74,10 +100,15 @@ const templates = alertData as Record<string, Record<string, string>>;
 const langs = LANGUAGES as { code: string; native: string; name: string }[];
 const uid = () => `${Date.now()}-${Math.random().toString(36).slice(2, 14)}`;
 const initial: Settings = {
+  settingsVersion: 2,
   setup: false,
   name: "",
   deviceId: uid(),
-  current: "hi",
+  role: "citizen",
+  verificationStatus: "unverified",
+  sourceSpeech: "hi",
+  targetTranslation: "mr",
+  ttsVoice: "mr",
   ui: "en",
   theme: "system",
   manifestUrl: DEFAULT_MANIFEST_URL,
@@ -92,18 +123,7 @@ const initial: Settings = {
   voiceMode: "translated",
   messages: [],
 };
-const tabNames: Record<string, string[]> = {
-  en: ["Talk", "Radar", "Alert", "History", "Settings"],
-  hi: ["बात करें", "रडार", "चेतावनी", "इतिहास", "सेटिंग्स"],
-  ta: ["பேசு", "ரேடார்", "எச்சரிக்கை", "வரலாறு", "அமைப்புகள்"],
-  bn: ["কথা", "রাডার", "সতর্কতা", "ইতিহাস", "সেটিংস"],
-  gu: ["વાત", "રડાર", "ચેતવણી", "ઇતિહાસ", "સેટિંગ્સ"],
-  mr: ["बोला", "रडार", "इशारा", "इतिहास", "सेटिंग्ज"],
-  kn: ["ಮಾತು", "ರೇಡಾರ್", "ಎಚ್ಚರಿಕೆ", "ಇತಿಹಾಸ", "ಸೆಟ್ಟಿಂಗ್‌ಗಳು"],
-  ml: ["സംസാരം", "റഡാർ", "അറിയിപ്പ്", "ചരിത്രം", "ക്രമീകരണങ്ങൾ"],
-  te: ["మాట", "రాడార్", "హెచ్చరిక", "చరిత్ర", "సెట్టింగ్‌లు"],
-  or: ["କଥା", "ରାଡାର", "ସତର୍କତା", "ଇତିହାସ", "ସେଟିଂସ୍"],
-};
+const tabKeys = ["Talk", "Radar", "Alert", "History", "Settings"];
 function Button({
   title,
   onPress,
@@ -148,8 +168,8 @@ function Field({
 }: any) {
   return (
     <TextInput
-      accessibilityLabel={placeholder}
-      placeholder={placeholder}
+      accessibilityLabel={localized(placeholder)}
+      placeholder={localized(placeholder)}
       placeholderTextColor={c.muted}
       value={value}
       onChangeText={onChangeText}
@@ -198,8 +218,12 @@ export default function App() {
     >("idle");
   const [packs, setPacks] = useState<Record<string, boolean>>({}),
     packsRef = useRef(packs),
+    [packDetails, setPackDetails] = useState<Record<string, any>>({}),
     [manifest, setManifest] = useState<any>(null),
     [downloading, setDownloading] = useState(""),
+    [downloadError, setDownloadError] = useState(""),
+    [downloadPaused, setDownloadPaused] = useState(""),
+    pauseRequested = useRef(""),
     [progress, setProgress] = useState<any>(null);
   const [recording, setRecording] = useState(false),
     [pttState, setPttState] = useState<"idle" | "arming" | "recording" | "processing">("idle"),
@@ -247,7 +271,9 @@ export default function App() {
         muted: "#607A96",
         line: "#D5E3F1",
       };
-  const tabs = tabNames[data.ui] || tabNames.en;
+  activeUi = data.ui || "en";
+  i18n.setLocale(activeUi);
+  const tabs = tabKeys.map((key) => i18n.translate(key, activeUi));
   const update = (patch: Partial<Settings>) => {
     const next = { ...ref.current, ...patch };
     ref.current = next;
@@ -301,10 +327,12 @@ export default function App() {
       deviceId: ref.current.deviceId,
       ...extra,
     });
-  const status = async () => {
-    const p = JSON.parse(await Native.packStatus());
-    packsRef.current = p;
-    setPacks(p);
+  const status = async (source = manifest || upstream) => {
+    const p = JSON.parse(await Native.packStatus(JSON.stringify(source)));
+    const installed = Object.fromEntries(Object.entries(p).map(([code, value]: any) => [code, value.installed === true]));
+    packsRef.current = installed;
+    setPacks(installed);
+    setPackDetails(p);
   };
   const add = async (m: Message) =>
     persist(update({ messages: prune([...ref.current.messages, m]) }));
@@ -318,14 +346,16 @@ export default function App() {
     setBusy("Playing speech on this phone…");
     try {
       if (m.kind === "voice" && m.audioUri) { await Native.playVoice(m.audioUri); return; }
-      const target = ref.current.current;
+      const target = ref.current.targetTranslation;
+      if (ref.current.ttsVoice !== target)
+        throw new Error("Choose the same language for translation target and TTS voice to play translated text.");
       let spoken = m.template ? phrase(m.template, target) : undefined;
       if (!spoken)
         spoken =
-          m.language === target
+          m.language === ref.current.targetTranslation
             ? m.text
-            : await Native.translate(m.text, m.language, target);
-      await Native.speak(spoken, target);
+            : await Native.translate(m.text, m.language, ref.current.targetTranslation);
+      await Native.speak(spoken, ref.current.ttsVoice);
     } finally {
       audioBusy.current--;
       if (!audioBusy.current) setBusy("");
@@ -384,7 +414,7 @@ export default function App() {
         Alert.alert(
           "Incoming alert",
           m.template
-            ? phrase(m.template, ref.current.current) || m.text
+            ? phrase(m.template, ref.current.targetTranslation) || m.text
             : m.text,
         );
       if (!m.queued && ref.current.autoPlay && !ptt.current?.active) await play(incoming);
@@ -427,8 +457,12 @@ export default function App() {
   useEffect(() => {
     Native.loadState()
       .then((raw: string) => {
-        const d = JSON.parse(raw);
-        update({ ...initial, ...d, messages: prune(d.messages || []) });
+        const previous = JSON.parse(raw);
+        const d = onboarding.migrateSettings(previous, initial);
+        const migrated = { ...initial, ...d, messages: prune(d.messages) };
+        update(migrated);
+        if (previous?.settingsVersion !== 2)
+          persist(migrated).catch((e: any) => setError(e.message));
         setSirenEnabled(d.sirenEnabled === true);
         setLoaded(true);
       })
@@ -550,6 +584,7 @@ export default function App() {
   async function loadManifest() {
     if (!ref.current.manifestUrl.trim()) {
       setManifest(upstream);
+      await status(upstream);
       return upstream;
     }
     if (!ref.current.manifestUrl.startsWith("https://"))
@@ -561,11 +596,15 @@ export default function App() {
     const m = await response.json();
     if (m.schema !== 1 || !m.packs) throw new Error("Invalid Talk2 manifest");
     setManifest(m);
+    await status(m);
     return m;
   }
   async function install(code: string) {
     if (downloading) return;
     setDownloading(code);
+    setDownloadError("");
+    setDownloadPaused("");
+    pauseRequested.current = "";
     try {
       const m = manifest || (await loadManifest());
       if (!m.packs[code])
@@ -576,12 +615,18 @@ export default function App() {
         );
       await Native.installPack(code, JSON.stringify(m));
       await status();
-    } finally {
-      setDownloading("");
       setProgress(null);
+    } catch (e) {
+      if (pauseRequested.current === code) setDownloadPaused(code);
+      else setDownloadError(code);
+      await status().catch(() => {});
+      throw e;
+    } finally {
+      pauseRequested.current = "";
+      setDownloading("");
     }
   }
-  async function send(content: string, kind = "text", template?: string, language = ref.current.current) {
+  async function send(content: string, kind = "text", template?: string, language = ref.current.sourceSpeech) {
     const value = content.trim();
     if (!value) return;
     if (kind === "alert" && !paired.current)
@@ -668,7 +713,7 @@ export default function App() {
     },
     error: (e: any) => { setError(e.message || String(e)); feedback("error"); },
     prepare: async () => {
-      setError(""); clipLanguage.current = ref.current.current; clipMode.current = ref.current.voiceMode;
+      setError(""); clipLanguage.current = ref.current.sourceSpeech; clipMode.current = ref.current.voiceMode;
       if (clipMode.current === "translated" && !packsRef.current[clipLanguage.current])
         throw new Error("Download the active speech pack, or choose Original voice in Settings.");
       if (clipMode.current === "original" && paired.current && !voicePeer.current)
@@ -736,6 +781,13 @@ export default function App() {
   const note = (text: string) => (
     <Text style={{ color: c.muted, lineHeight: 21 }}>{text}</Text>
   );
+  const roleLabels: Record<string, string> = {
+    citizen: "Citizen",
+    volunteer: "Volunteer",
+    medical_support: "Medical / support",
+    emergency_staff: "Emergency staff",
+  };
+  const verification = onboarding.verificationDisplay(data.role);
   const option = (icon: string, name: string, detail: string, value: boolean, onChange: (value:boolean)=>void) => (
     <View style={[s.row, {paddingVertical:8}]}>
       <Text style={{fontSize:23,color:"#347453",width:34}}>{icon}</Text>
@@ -769,25 +821,45 @@ export default function App() {
     })}
   ]);
   function languageList() {
+    const knownManifest = manifest || upstream;
     return (
       <>
-        {label("SPEAK & LISTEN • ONE ACTIVE LANGUAGE")}
+        {label("SPEECH PACKS · DOWNLOAD OPTIONAL")}
         {langs.map((l) =>
-          card(
+          {
+          const details = packDetails[l.code] || {};
+          const spec = knownManifest.packs?.[l.code];
+          const expectedBytes = details.expectedBytes || spec?.files?.reduce((n: number, f: any) => n + f.bytes, 0) || 0;
+          const downloadedBytes = progress?.pack === l.code ? progress.done : details.partialBytes || 0;
+          const pack = packUtils.packStatus({
+            code: l.code,
+            inManifest: details.available ?? !!spec,
+            installed: !!packs[l.code],
+            downloading: downloading === l.code,
+            paused: downloadPaused === l.code,
+            failed: downloadError === l.code,
+            downloadedBytes,
+            expectedBytes,
+          });
+          const stateLabel = pack.state === "installed" ? "Installed · checksum verified"
+            : pack.state === "unavailable" ? "Not in this release"
+              : pack.state === "downloading" ? "Downloading"
+                : pack.state === "paused" ? "Paused · resumable"
+                : pack.state === "partial" ? "Partial download · resumable"
+                  : pack.state === "failed" ? "Download failed · retry available"
+                    : "Available offline · not installed";
+          return card(
             <>
               <View style={s.row}>
                 <View style={{ flex: 1 }}>
                   {title(l.native)}
                   {note(
-                    `${l.name}${data.current === l.code ? " · Active" : ""}`,
+                    `${l.name}${data.sourceSpeech === l.code ? " · Active" : ""}`,
                   )}
                 </View>
-                {note(packs[l.code] ? "Verified ✓" : "Not installed")}
+                {note(stateLabel)}
               </View>
-              {manifest?.packs[l.code] &&
-                note(
-                  `${Math.round(manifest.packs[l.code].files.reduce((n: number, f: any) => n + f.bytes, 0) / 1048576)} MB download`,
-                )}
+              {expectedBytes > 0 && note(i18n.packProgressLabel(l.code, downloadedBytes, expectedBytes, data.ui))}
               <View style={s.row}>
                 <View style={{ flex: 1 }}>
                   {button(
@@ -795,13 +867,17 @@ export default function App() {
                       ? "Use language"
                       : downloading === l.code
                         ? "Downloading…"
-                        : "Download",
+                        : downloadError === l.code
+                          ? "Retry"
+                          : downloadedBytes > 0
+                            ? "Resume"
+                            : "Download",
                     () =>
                       packs[l.code]
-                        ? change({ current: l.code })
+                        ? change({ sourceSpeech: l.code })
                         : run(() => install(l.code)),
                     false,
-                    !!downloading,
+                    !!downloading || (!packs[l.code] && !pack.downloadable),
                   )}
                 </View>
                 {packs[l.code] &&
@@ -821,18 +897,29 @@ export default function App() {
                                 (x) =>
                                   x.code !== l.code && packsRef.current[x.code],
                               );
-                              if (data.current === l.code)
-                                change({ current: remaining?.code || "hi" });
-                              if (data.ui === l.code) change({ ui: "en" });
+                              if (data.sourceSpeech === l.code)
+                                change({ sourceSpeech: remaining?.code || "mr" });
+
                             }),
                         },
                       ]),
                     true,
                   )}
+                {!packs[l.code] && downloadedBytes > 0 &&
+                  button(
+                    "Remove partial files",
+                    () => Alert.alert("Remove partial download?", l.name, [
+                      { text: "Cancel" },
+                      { text: "Remove", style: "destructive", onPress: () => run(async () => { await Native.removePack(l.code); setDownloadPaused(""); setDownloadError(""); await status(); }) },
+                    ]),
+                    true,
+                    !!downloading,
+                  )}
               </View>
             </>,
             l.code,
-          ),
+          );
+          },
         )}
         {card(
           <>
@@ -840,12 +927,19 @@ export default function App() {
             {note(
               "Encoder, decoder and vocabulary. General translation enabled for Hindi ↔ Marathi. Other pairs need validated preprocessing/models.",
             )}
+            {note(packDetails.translation?.installed ? "Installed · checksum verified" : downloadPaused === "translation" ? "Paused · resumable" : downloadError === "translation" ? "Download failed · retry available" : "Available offline · not installed")}
+            {packDetails.translation?.expectedBytes > 0 && note(i18n.packProgressLabel("translation", progress?.pack === "translation" ? progress.done : packDetails.translation.partialBytes || 0, packDetails.translation.expectedBytes, data.ui))}
             {button(
-              packs.translation ? "Installed ✓" : "Download translation",
+              packs.translation ? "Installed" : downloadError === "translation" ? "Retry translation download" : "Download translation",
               () => run(() => install("translation")),
               false,
-              !!downloading || !!packs.translation,
+              !!downloading || !!packs.translation || !packDetails.translation?.available,
             )}
+            {packs.translation && button("Remove", () => Alert.alert("Remove pack?", "Shared translation", [
+              { text: "Cancel" },
+              { text: "Remove", style: "destructive", onPress: () => run(async () => { await Native.removePack("translation"); await status(); }) },
+            ]), true)}
+            {!packs.translation && packDetails.translation?.partialBytes > 0 && button("Remove partial files", () => run(async () => { await Native.removePack("translation"); setDownloadPaused(""); setDownloadError(""); await status(); }), true, !!downloading)}
           </>,
         )}
       </>
@@ -867,7 +961,7 @@ export default function App() {
               )}
               <Text selectable style={[s.message, { color: c.ink }]}>
                 {m.template
-                  ? phrase(m.template, data.current) || m.text
+                  ? phrase(m.template, data.targetTranslation) || m.text
                   : m.text}
               </Text>
               <View style={s.row}>
@@ -1012,6 +1106,12 @@ export default function App() {
                 "Your name",
               )}
               {note("Your name is shared only with a paired phone.")}
+              {title("Choose your role")}
+              {Object.entries(roleLabels).map(([role, roleText]) =>
+                button(roleText, () => change({ role }), data.role !== role, false),
+              )}
+              {data.role === "emergency_staff" &&
+                note("Unverified emergency staff. Role verification is not available yet. You can skip future email OTP and continue without internet.")}
             </>,
           )
         ) : step === 1 ? (
@@ -1036,9 +1136,8 @@ export default function App() {
               {label("MENUS & BUTTONS")}
               {[
                 "en",
-                ...langs
-                  .filter((l) => packs[l.code] && l.code !== "en")
-                  .map((l) => l.code),
+                "mr",
+                ...langs.map((l) => l.code).filter((code) => code !== "en" && code !== "mr"),
               ].map((code) => (
                 <Button
                   key={code}
@@ -1048,6 +1147,7 @@ export default function App() {
                   onPress={() => change({ ui: code })}
                 />
               ))}
+              {note(i18n.coverageText(data.ui))}
               {label("LOOK & FEEL")}
               <View style={s.row}>
                 {["system", "light", "dark"].map((x) => (
@@ -1066,7 +1166,7 @@ export default function App() {
         {button(
           step === 2
             ? "Start using Talk2"
-            : step === 1 && !packs[data.current]
+            : step === 1 && !packs[data.sourceSpeech]
               ? "Continue with text only"
               : "Continue",
           () => (step === 2 ? change({ setup: true }) : setStep(step + 1)),
@@ -1187,10 +1287,10 @@ export default function App() {
             .map(([key, p]) => (
               <Pressable
                 key={key}
-                onPress={() => setText(p[data.current])}
+                onPress={() => setText(p[data.sourceSpeech])}
                 style={[s.chip, { borderColor: c.line }]}
               >
-                <Text style={{ color: c.ink }}>{p[data.current]}</Text>
+                <Text style={{ color: c.ink }}>{p[data.sourceSpeech]}</Text>
               </Pressable>
             ))}
         </ScrollView>
@@ -1201,7 +1301,7 @@ export default function App() {
             {note(
               data.voiceMode === "original" ? "Original voice · release to send · no language model needed" : data.reviewSpeech ? "Translated speech · release to review the transcript" : "Translated speech · release to send; your peer hears their selected language",
             )}
-            {note(`Active: ${langs.find(l=>l.code===data.current)?.name} · ${connected ? (voiceCapable ? "Peer supports original voice" : "Peer uses text/speech protocol") : "Offline clips are saved for retry"}`)}
+            {note(`Active: ${langs.find(l=>l.code===data.sourceSpeech)?.name} · ${connected ? (voiceCapable ? "Peer supports original voice" : "Peer uses text/speech protocol") : "Offline clips are saved for retry"}`)}
             {mic}
             {button(
               connected ? "Send message" : "Save for later",
@@ -1371,17 +1471,17 @@ export default function App() {
         {Object.entries(templates).map(([key, p]) =>
           card(
             <>
-              {title(p[data.current])}
+              {title(p[data.sourceSpeech])}
               {note(p.en)}
               {button(
                 "Send alert",
                 () =>
-                  Alert.alert("Send this alert?", p[data.current], [
+                  Alert.alert("Send this alert?", p[data.sourceSpeech], [
                     { text: "Cancel" },
                     {
                       text: "Send",
                       onPress: () =>
-                        run(() => send(p[data.current], "alert", key)),
+                        run(() => send(p[data.sourceSpeech], "alert", key)),
                     },
                   ]),
                 false,
@@ -1453,18 +1553,24 @@ export default function App() {
               "Your name",
             )}
             {note("Talk2 · a little closer")}
+            {title("Choose your role")}
+            {Object.entries(roleLabels).map(([role, roleText]) =>
+              button(roleText, () => change({ role }), data.role !== role),
+            )}
+            {note(verification.label)}
+            {data.role === "emergency_staff" &&
+              note("Email control or role selection does not verify employment. A signed organization credential is not configured.")}
           </>,
         )}
         {card(
           <>
             {button("◉ Languages & offline downloads", () => setRoute("languages"), true)}
-            {label("APP LANGUAGE · SOME TEXT FALLS BACK TO ENGLISH")}
+            {label("UI language")}
             <View style={s.row}>
               {[
                 "en",
-                ...langs
-                  .filter((l) => packs[l.code] && l.code !== "en")
-                  .map((l) => l.code),
+                "mr",
+                ...langs.map((l) => l.code).filter((code) => code !== "en" && code !== "mr"),
               ].map((code) => (
                 <Button
                   key={code}
@@ -1475,6 +1581,7 @@ export default function App() {
                 />
               ))}
             </View>
+            {note(i18n.coverageText(data.ui))}
             {label("☀ APPEARANCE")}
             <View style={s.row}>
               {["system", "light", "dark"].map((x) => (
@@ -1487,6 +1594,17 @@ export default function App() {
                 />
               ))}
             </View>
+          </>,
+        )}
+        {card(
+          <>
+            {label("Source speech")}
+            <ScrollView horizontal>{langs.map((l) => button(l.native, () => change({ sourceSpeech: l.code }), data.sourceSpeech !== l.code))}</ScrollView>
+            {label("Translation target")}
+            <ScrollView horizontal>{langs.map((l) => button(l.native, () => change({ targetTranslation: l.code }), data.targetTranslation !== l.code))}</ScrollView>
+            {label("TTS voice")}
+            <ScrollView horizontal>{langs.map((l) => button(l.native, () => change({ ttsVoice: l.code }), data.ttsVoice !== l.code))}</ScrollView>
+            {note("Speech recognition and voice synthesis need their matching installed speech packs. Match TTS voice to translation target for playback. General model translation supports Hindi ↔ Marathi only.")}
           </>,
         )}
         {card(
@@ -1579,7 +1697,7 @@ export default function App() {
           }}
         >
           <Text style={{ color: "#1769AA", fontWeight: "700" }}>
-            {langs.find((l) => l.code === data.current)?.native}
+            {langs.find((l) => l.code === data.sourceSpeech)?.native}
           </Text>
         </Pressable>
       </View>
@@ -1600,11 +1718,11 @@ export default function App() {
         <View style={s.download}>
           <Text style={{ color: c.ink, flex: 1 }}>
             {progress
-              ? `${progress.pack} · ${Math.round(progress.done / 1048576)} / ${Math.round(progress.total / 1048576)} MB`
+              ? i18n.packProgressLabel(progress.pack, progress.done, progress.total, data.ui)
               : "Preparing download…"}
           </Text>
-          <Pressable onPress={() => Native.cancelDownload()}>
-            <Text style={{ color: "#B84A29" }}>Pause</Text>
+          <Pressable onPress={() => { pauseRequested.current = downloading; Native.cancelDownload(); }}>
+            <Text style={{ color: "#B84A29" }}>Cancel download</Text>
           </Pressable>
         </View>
       )}

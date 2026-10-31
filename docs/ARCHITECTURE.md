@@ -4,6 +4,19 @@ React Native owns onboarding, profile, tabs, settings, message status and consen
 Java owns Android hardware, ONNX inference, private model/voice storage and peer
 transport. The Node service is optional and receives only explicit assistant prompts.
 
+Role selection is local Settings data. Citizen, volunteer, medical/support and
+emergency staff are self-declared labels. The profile packet sends name and device
+capabilities only; it does not carry a verified flag. A mobile
+RoleVerificationProvider boundary currently uses a stub that always returns
+unverified. See VERIFICATION_API.md for the future signed credential design.
+
+Settings keep UI language, source speech, translation target and TTS voice as
+separate values. Small English/Marathi UI resources ship in the application bundle;
+missing keys use structured English fallback and are counted in the UI coverage
+diagnostic. Speech/translation ONNX assets remain optional, checksum-verified
+downloads. Model status distinguishes release availability, installed verification
+and partial transfer bytes.
+
 ## Speech and voice
 
 Each press owns one capture lifecycle. Permission and floor acquisition may complete

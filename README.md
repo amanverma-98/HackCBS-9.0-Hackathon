@@ -16,6 +16,17 @@ Java device integrations, and an optional Node.js assistant backend.
   compass-relative bearing. Radar does not need GPT or an internet server.
 - Profile name and local photo; light/dark/system appearance; vibration,
   alert sounds, automatic playback, nearby-peer cue, history, and diagnostics.
+- Offline role selection (citizen, volunteer, medical/support, emergency staff).
+  Staff remain visibly unverified until a future signed credential verifier exists.
+- Independent UI, source speech, translation target and TTS language settings.
+  English and Marathi UI strings are bundled with the app; other offered UI
+  languages show coverage and fall back to English.
+
+First-run setup, text chat and Original voice do not require model downloads or
+internet. Speech recognition and TTS require their selected local packs. The
+supplied release has no Hindi speech assets; general model translation supports
+Hindi ↔ Marathi only. Pack availability, exact total size, checksum-verified
+installation, cumulative progress and resumable partial downloads are shown.
 
 ## Development setup
 

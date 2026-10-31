@@ -13,6 +13,15 @@
   status; turning sharing off clears the peer marker.
 - Vibration, alert sound, automatic playback, nearby-peer cue and privacy controls.
 - Local profile-photo picker, green/orange settings UI and separate debug package.
+- Persisted citizen, volunteer, medical/support and emergency staff role selection.
+- Staff roles remain unverified; the local role-verification provider stub never
+  grants verification. The future signed credential boundary is documented.
+- Settings JSON migration; source speech, translation target, TTS voice and UI
+  language are separate persisted choices.
+- Bundled English/Marathi UI resources with English fallback and coverage
+  diagnostics for other offered UI languages.
+- Pack status reports manifest availability, checksum-verified installation,
+  complete pack size, received bytes and resumable partial state.
 
 ## Verified here
 
@@ -37,7 +46,9 @@ on the actual target phones.
   continuous call.
 - One peer and one transport are active at a time. Bluetooth is Classic RFCOMM.
   There is no BLE mesh, automatic multipath or background foreground service.
-- Keep Talk2 open. Profile photos remain local. Supporting UI text is mainly English.
+- Keep Talk2 open. Profile photos remain local. Marathi UI coverage reports
+  untranslated keys with English fallback; other offered UI languages currently
+  fall back to English.
 - GPS and compass results are approximate and can be unavailable indoors. The
   optional 20 m cue is not an emergency proximity detector.
 - Speech quality, memory, latency and battery require language-by-language testing

@@ -29,6 +29,16 @@ transport and the exact on-screen error for any failure.
 11. Clear history only after playback/capture stops; confirm private voice clips are
     removed. Install Debug beside standalone and confirm their data remains separate.
 
+12. Complete onboarding with airplane mode enabled, choose each role, and restart.
+    Confirm role persistence; emergency staff remain labeled unverified and can
+    proceed without an email step. Confirm the profile photo remains local.
+13. Change UI language independently from source speech, translation target and TTS
+    voice, restart, and confirm each value persists. Choose a fallback UI language
+    and inspect its coverage diagnostic and English fallback.
+14. Inspect each speech pack's release availability and exact total size. Interrupt
+    a download, resume it, confirm installed status follows checksum completion,
+    remove it and retry. Hindi speech must show unavailable in this release.
+
 Capture logs with:
 
 ```powershell
