@@ -165,6 +165,8 @@ for (const [key, [marathi, hindi, gujarati]] of Object.entries(indic.ADDED)) { e
 Object.assign(mr, indic.MARATHI_FIXES);
 const resources = { en, mr, hi, gu };
 let locale = "en";
+// The app name is a brand: it is never translated in any language.
+const BRAND = "Talk2";
 function setLocale(value) { locale = value || "en"; }
 function coverageText(language) {
   const d = diagnostics(language);
@@ -187,6 +189,7 @@ function packProgressLabel(pack, done, total, language) {
 }
 function translate(value, language = locale) {
   if (typeof value !== "string") return value;
+  if (value === BRAND) return BRAND;
   const missingSpeech = value.match(/^Install ([a-z]{2}) speech pack first$/);
   if (missingSpeech && language === "mr") return `${missingSpeech[1]} स्पीच पॅक प्रथम स्थापित करा`;
   if (missingSpeech && language === "hi") return `पहले ${missingSpeech[1]} भाषा पैक इंस्टॉल करें`;
@@ -203,4 +206,4 @@ function diagnostics(language) {
   const missing = keys.filter((key) => !dict[key]);
   return { language, total: keys.length, translated: keys.length - missing.length, missing, coverage: keys.length ? (keys.length - missing.length) / keys.length : 1 };
 }
-module.exports = { resources, setLocale, translate, diagnostics, coverageText, packProgressLabel, mb };
+module.exports = { BRAND, resources, setLocale, translate, diagnostics, coverageText, packProgressLabel, mb };

@@ -8,6 +8,7 @@ import {
   Image,
   Linking,
   Modal,
+  Platform,
   Pressable,
   SafeAreaView,
   ScrollView,
@@ -70,6 +71,13 @@ type Message = {
   mesh?: boolean;
   transcript?: string;
   recipient?: string;
+  // Receiver-side translation into this phone's "Translate to" language.
+  translated?: string;
+  translatedLang?: string;
+  // Mesh node that sent it, for messages that arrived over the mesh.
+  from?: string;
+  // Sealed end to end (direct link or sealed mesh); false for public mesh broadcasts.
+  private?: boolean;
 };
 type Settings = {
   settingsVersion: number;
@@ -201,7 +209,7 @@ function Field({
 function notifyMessage(setError: (message: string) => void) {
   try {
     if (Native && typeof Native.vibrateForMessage === "function") {
-      Native.vibrateForMessage().catch(() => {});
+      Native.vibrateForMessage().catch(() => { });
     }
   } catch {
     // Notification feedback must never interrupt receiving or speech playback.
@@ -288,6 +296,22 @@ export default function App() {
     [token, setToken] = useState(""),
     [answer, setAnswer] = useState("");
   const [sirenEnabled, setSirenEnabled] = useState(false);
+  // People announced over the mesh, keyed by mesh node id; includes phones several hops away.
+  const [meshDir, setMeshDir] = useState<Record<string, any>>({}),
+    meshDirRef = useRef<Record<string, any>>({}),
+    // Who the Talk screen sends to when it is not the directly paired phone.
+    [chatPeer, setChatPeer] = useState<any>(null),
+    chatPeerRef = useRef<any>(null),
+    peerMeshId = useRef(""),
+    meshStarting = useRef(false),
+    [meshIssue, setMeshIssue] = useState(""),
+    [appActive, setAppActive] = useState(true),
+    [peerTalking, setPeerTalking] = useState(false),
+    [pttHint, setPttHint] = useState(""),
+    recordSince = useRef(0),
+    sealKey = useRef("");
+  meshDirRef.current = meshDir;
+  chatPeerRef.current = chatPeer;
   const [meshActive, setMeshActive] = useState(false),
     [meshNode, setMeshNode] = useState(""),
     [meshPeers, setMeshPeers] = useState<string[]>([]),
@@ -315,19 +339,19 @@ export default function App() {
       data.theme === "dark" || (data.theme === "system" && system === "dark");
   const c: Colors = dark
     ? {
-        bg: "#071426",
-        card: "#10243D",
-        ink: "#F1F7FF",
-        muted: "#AFC2D8",
-        line: "#2A4566",
-      }
+      bg: "#071426",
+      card: "#10243D",
+      ink: "#F1F7FF",
+      muted: "#AFC2D8",
+      line: "#2A4566",
+    }
     : {
-        bg: "#F2F7FC",
-        card: "#FFFFFF",
-        ink: "#102A43",
-        muted: "#607A96",
-        line: "#D5E3F1",
-      };
+      bg: "#F2F7FC",
+      card: "#FFFFFF",
+      ink: "#102A43",
+      muted: "#607A96",
+      line: "#D5E3F1",
+    };
   activeUi = data.ui || "en";
   i18n.setLocale(activeUi);
   const tabs = tabKeys.map((key) => i18n.translate(key, activeUi));
@@ -339,7 +363,7 @@ export default function App() {
   };
   const persist = async (next: Settings) => {
     saveChain.current = saveChain.current
-      .catch(() => {})
+      .catch(() => { })
       .then(() => Native.saveState(JSON.stringify(next)));
     await saveChain.current;
   };
@@ -366,8 +390,10 @@ export default function App() {
   const sendPosition = async (fix: any) => {
     if (!locationPolicy.usableLocation(fix)) return;
     const now = Date.now();
-    if (ref.current.shareLocation && paired.current) await wire({ id: uid(), kind: "position", time: now, expires: fix.time + 30000,
-      ageMs: Math.max(0, now - fix.time), coords: { latitude: fix.latitude, longitude: fix.longitude, accuracy: fix.accuracy } });
+    if (ref.current.shareLocation && paired.current) await wire({
+      id: uid(), kind: "position", time: now, expires: fix.time + 30000,
+      ageMs: Math.max(0, now - fix.time), coords: { latitude: fix.latitude, longitude: fix.longitude, accuracy: fix.accuracy }
+    });
     if (meshEnabledRef.current && meshSharingRef.current && now - lastMeshPosition.current >= 10000) {
       lastMeshPosition.current = now;
       await Native.shareMeshPosition(JSON.stringify({ time: now, expires: fix.time + 30000, coords: fix, name: ref.current.name, role: ref.current.role }));
@@ -388,7 +414,7 @@ export default function App() {
     const installed = Object.fromEntries(
       Object.entries(p).map(([code, value]: any) => [
         code,
-        value.installed === true,
+        value.installed === true || value.builtInSpeech === true,
       ]),
     );
     packsRef.current = installed;
@@ -402,41 +428,63 @@ export default function App() {
     Object.prototype.hasOwnProperty.call(templates, key)
       ? templates[key][language]
       : undefined;
-  async function play(m: Message) {
+  /** Speaks a message in this phone's language; original=true plays the recorded voice instead. */
+  async function play(m: Message, original = false) {
     if (ptt.current?.active)
       throw new Error("Finish recording before playing a message");
     audioBusy.current++;
     setBusy("Playing speech on this phone…");
     try {
-      if (m.kind === "voice" && m.audioUri) {
+      const target = ref.current.targetTranslation;
+      if (m.kind === "voice" && m.audioUri && (original || !(m.translated || m.transcript))) {
         await Native.playVoice(m.audioUri);
         return;
       }
-
-      const target = ref.current.targetTranslation;
-      if (ref.current.ttsVoice !== target)
-        throw new Error(
-          "Choose the same language for translation target and TTS voice to play translated text.",
-        );
+      const source = m.kind === "voice" ? m.transcript || "" : m.text;
       let spoken = m.template ? phrase(m.template, target) : undefined;
       if (!spoken)
         spoken =
-          m.language === ref.current.targetTranslation
-            ? m.text
-            : await Native.translate(
-                m.text,
-                m.language,
-                ref.current.targetTranslation,
-              );
-      await Native.speak(spoken, ref.current.ttsVoice);
+          m.translated && m.translatedLang === target
+            ? m.translated
+            : m.language === target
+              ? source
+              : await Native.translate(source, m.language, target);
+      await Native.speak(spoken, target);
     } finally {
       audioBusy.current--;
       if (!audioBusy.current) setBusy("");
     }
   }
 
-
-
+  /** Translates an incoming message into this phone's language and stores the result. */
+  async function translateIncoming(m: Message): Promise<Message> {
+    const target = ref.current.targetTranslation;
+    const source = m.kind === "voice" ? m.transcript || "" : m.text;
+    if (!source || m.template || !m.language || m.language === "und" || m.language === target) return m;
+    try {
+      const translated = await Native.translate(source, m.language, target);
+      const next = { ...m, translated, translatedLang: target };
+      change({ messages: ref.current.messages.map((x) => (x.id === m.id && x.direction === "in" ? next : x)) });
+      return next;
+    } catch {
+      return m;
+    }
+  }
+  async function deliver(incoming: Message) {
+    await add(incoming);
+    feedback("message");
+    if (incoming.kind === "alert")
+      Alert.alert(
+        "Incoming alert",
+        incoming.template
+          ? phrase(incoming.template, ref.current.targetTranslation) || incoming.text
+          : incoming.text,
+      );
+    const ready = await translateIncoming(incoming);
+    // Auto-play is best effort; the message's Play button reports why speech failed.
+    if (!incoming.queued && ref.current.autoPlay && !ptt.current?.active)
+      await play(ready).catch(() => (ready.audioUri ? play(ready, true).catch(() => { }) : undefined));
+  }
   async function receive(m: any) {
     if (!validMessage(m)) return;
     if (m.kind === "ack") {
@@ -456,6 +504,7 @@ export default function App() {
       setPeerName(peerLabel.current);
       setPeerRole(onboarding.ROLES.includes(m.role) ? m.role : "unknown");
       peerId.current = String(m.deviceId || "");
+      peerMeshId.current = String(m.meshId || "").slice(0, 80);
       voicePeer.current = m.capabilities?.includes("voice-pcm-v1") === true;
       setVoiceCapable(voicePeer.current);
       return;
@@ -472,7 +521,7 @@ export default function App() {
       return;
     }
 
-    
+
     if (!["text", "alert", "voice"].includes(m.kind)) return;
     if (
       !ref.current.messages.some((x) => x.id === m.id && x.direction === "in")
@@ -483,36 +532,45 @@ export default function App() {
         status: "received",
         name: peerLabel.current,
       };
-      await add(incoming);
-      await wire({ id: uid(), kind: "ack", ack: m.id, time: Date.now() });
-      feedback("message");
-      if (m.kind === "alert")
-        Alert.alert(
-          "Incoming alert",
-          m.template
-            ? phrase(m.template, ref.current.targetTranslation) || m.text
-            : m.text,
-        );
-      // Auto-play is best effort; the message's Play button reports why speech failed.
-      if (!m.queued && ref.current.autoPlay && !ptt.current?.active)
-        await play(incoming).catch(() => {});
+      await wire({ id: uid(), kind: "ack", ack: m.id, time: Date.now() }).catch(() => { });
+      await deliver(incoming);
     } else await wire({ id: uid(), kind: "ack", ack: m.id, time: Date.now() });
   }
   async function receiveMesh(e: any) {
     if (!e?.id || !e?.body) return;
     if (!ref.current.messages.some((m) => m.id === e.id && m.direction === "in")) {
+      // Chat over the mesh carries its language so the receiver can translate it.
+      let chat: any = null;
+      try {
+        const parsed = JSON.parse(e.body);
+        if (parsed && parsed.k === "chat" && typeof parsed.text === "string") chat = parsed;
+      } catch {
+        // Plain public text.
+      }
+      const sender = typeof e.sender === "string" ? e.sender : "";
+      const broadcast = e.destination === "*";
+      // Private messages must arrive sealed; an unsealed addressed message is not trusted.
+      if (!broadcast && !e.private) {
+        await Mesh.acknowledgeInbox(e.id);
+        return;
+      }
       const incoming: Message = {
         id: e.id,
-        kind: e.type === "meshSOS" ? "alert" : "text",
-        text: e.body,
-        language: "und",
+        kind: e.type === "meshSOS" || chat?.alert ? "alert" : "text",
+        text: (chat ? chat.text : e.body).slice(0, 1000),
+        language: chat && langs.some((l) => l.code === chat.lang) ? chat.lang : "und",
         time: Number(e.created) || Date.now(),
         direction: "in",
         status: "received",
-        name: "BLE mesh",
+        name: String(chat?.name || meshDirRef.current[sender]?.name || "BLE mesh").slice(0, 40),
+        mesh: true,
+        from: sender,
+        private: !broadcast,
       };
-      await add(incoming);
-      if (e.type === "meshSOS") Alert.alert("Mesh SOS", e.body);
+      if (e.type === "meshSOS") {
+        await add(incoming);
+        Alert.alert("Mesh SOS", incoming.text);
+      } else await deliver(incoming);
     }
     await Mesh.acknowledgeInbox(e.id);
   }
@@ -520,6 +578,7 @@ export default function App() {
     if (!validMessage(m) || m.kind !== "floor") return;
     if (m.op === "release") {
       remoteFloor.current = false;
+      setPeerTalking(false);
       clearTimeout(remoteFloorTimer.current);
       return;
     }
@@ -540,10 +599,12 @@ export default function App() {
         !winsTie;
       if (grant) {
         remoteFloor.current = true;
+        setPeerTalking(true);
         clearTimeout(remoteFloorTimer.current);
         remoteFloorTimer.current = setTimeout(() => {
           remoteFloor.current = false;
-        }, 60000);
+          setPeerTalking(false);
+        }, 25000);
         if (requesting.current && floorPromise.current) {
           floorPromise.current.resolve(false);
           floorPromise.current = null;
@@ -586,21 +647,44 @@ export default function App() {
           setRadioStatus(`${i18n.translate("Reconnecting…", activeUi)} ${e.attempt}/${e.max}`);
         }
         if (e.type === "voiceError") setError(e.message);
-        if (e.type === "meshVoice") receiveChain.current = receiveChain.current.catch(() => {}).then(async () => {
-          if (!ref.current.messages.some(m => m.id === e.id && m.direction === "in")) await add({ id: e.id, kind: "voice", text: e.transcript || "Public voice note", transcript: e.transcript, language: e.language, time: e.created, direction: "in", status: "received", mesh: true, audioUri: e.audioUri, durationMs: e.durationMs, name: e.sender.slice(0, 8) });
+        if (e.type === "meshVoice") receiveChain.current = receiveChain.current.catch(() => { }).then(async () => {
+          if (ref.current.messages.some(m => m.id === e.id && m.direction === "in")) return;
+          const note: Message = { id: e.id, kind: "voice", text: e.transcript || "Public voice note", transcript: e.transcript, language: e.language, time: e.created, direction: "in", status: "received", mesh: true, audioUri: e.audioUri, durationMs: e.durationMs, name: String(meshDirRef.current[e.sender]?.name || e.sender.slice(0, 8)), from: e.sender };
+          await add(note);
+          await translateIncoming(note);
         }).catch((x: any) => setError(x.message));
-        if (e.type === "meshVoiceOutgoing") receiveChain.current = receiveChain.current.catch(() => {}).then(async () => {
-          if (!ref.current.messages.some(m => m.id === e.id && m.direction === "out")) await add({ id:e.id, kind:"voice", text:e.transcript || "Public voice note", transcript:e.transcript, language:e.language, time:e.created, direction:"out", status:e.status, mesh:true, audioUri:e.audioUri, recipient:e.recipient });
-        }).catch((x:any) => setError(x.message));
+        if (e.type === "meshVoiceOutgoing") receiveChain.current = receiveChain.current.catch(() => { }).then(async () => {
+          if (!ref.current.messages.some(m => m.id === e.id && m.direction === "out")) await add({ id: e.id, kind: "voice", text: e.transcript || "Public voice note", transcript: e.transcript, language: e.language, time: e.created, direction: "out", status: e.status, mesh: true, audioUri: e.audioUri, recipient: e.recipient });
+        }).catch((x: any) => setError(x.message));
         if (e.type === "meshVoiceStatus" && ref.current.messages.some(m => m.id === e.id && m.mesh && (m.status !== e.status || (m.recipient || "") !== (e.recipient || "")))) change({ messages: ref.current.messages.map(m => m.id === e.id && m.mesh ? { ...m, status: e.status, recipient: e.recipient } : m) });
         if (e.type === "meshPosition" && e.sender !== meshIdRef.current) setMeshLocations(old => locationPolicy.mergeLocationPeer(old, e));
         if (e.type === "meshNeighbor") setMeshLinkSeen(old => { const next = { ...old }; if (e.connected) next[e.id] = Date.now(); else delete next[e.id]; return next; });
         if (e.type === "meshVoicePiece") setMeshLinkSeen(old => old[e.neighbor] ? { ...old, [e.neighbor]: Date.now() } : old);
         if (e.type === "meshNeighbor") setMeshPeers((old) => e.connected ? (old.includes(e.id) ? old : [...old, e.id]) : old.filter((id) => id !== e.id));
-        if (e.type === "meshError") setError(e.message || "BLE mesh error");
+        if (e.type === "meshError") setMeshIssue(e.message || "BLE mesh error");
         if (e.type === "meshStopped") { meshEnabledRef.current = false; meshSharingRef.current = false; setMeshSharing(false); setMeshActive(false); setMeshPeers([]); setMeshLinkSeen({}); }
         if (e.type === "meshMessage" || e.type === "meshSOS") receiveMesh(e).catch((x: any) => setError(x.message));
-        if (e.type === "meshReceipt") setRadioStatus("Mesh destination receipt received");
+        if (e.type === "meshReceipt" && typeof e.body === "string")
+          change({ messages: ref.current.messages.map((m) => (m.id === e.body && m.mesh && m.direction === "out" ? { ...m, status: "delivered" } : m)) });
+        if (e.type === "meshStatus" && ref.current.messages.some((m) => m.id === e.id && m.mesh && m.direction === "out" && m.kind !== "voice" && m.status !== "delivered")) {
+          const next = e.status === "sent-to-neighbor" ? "sent" : e.status;
+          change({ messages: ref.current.messages.map((m) => (m.id === e.id && m.mesh && m.direction === "out" && m.status !== "delivered" ? { ...m, status: next } : m)) });
+        }
+        if (e.type === "meshPresence" && typeof e.sender === "string" && e.sender !== meshIdRef.current)
+          setMeshDir((old) => ({
+            ...old,
+            [e.sender]: {
+              id: e.sender,
+              name: String(e.name || e.sender.slice(0, 8)).slice(0, 40),
+              role: onboarding.ROLES.includes(e.role) ? e.role : "unknown",
+              device: String(e.device || "").slice(0, 80),
+              hops: Math.max(0, Number(e.hops) || 0),
+              speak: String(e.speak || ""),
+              hear: String(e.hear || ""),
+              key: typeof e.key === "string" && e.key.length < 400 ? e.key : old[e.sender]?.key || "",
+              lastSeen: Date.now(),
+            },
+          }));
         if (e.type === "sensorStatus") setSensorStatus(e.message);
         if (e.type === "status") {
           setRadioStatus(e.state);
@@ -658,12 +742,13 @@ export default function App() {
             name: ref.current.name,
             role: ref.current.role,
             deviceId: ref.current.deviceId,
+            meshId: meshIdRef.current,
             capabilities: ["voice-pcm-v1"],
           }).catch((x: any) => setError(x.message));
           // Deliver text saved while the link was down.
           for (const m of ref.current.messages)
             if (m.direction === "out" && m.kind === "text" && ["queued", "failed"].includes(m.status))
-              retry(m).catch(() => {});
+              retry(m).catch(() => { });
           if (ref.current.shareLocation) {
             permissions("location")
               .then(() => Native.startSensors())
@@ -722,6 +807,7 @@ export default function App() {
     });
     refreshPermissions();
     const app = AppState.addEventListener("change", (s) => {
+      setAppActive(s === "active");
       if (s === "active") refreshPermissions();
       if (s !== "active") {
         ptt.current?.cancel();
@@ -783,12 +869,31 @@ export default function App() {
     } catch (e) {
       if (pauseRequested.current === code) setDownloadPaused(code);
       else setDownloadError(code);
-      await status().catch(() => {});
+      await status().catch(() => { });
       throw e;
     } finally {
       pauseRequested.current = "";
       setDownloading("");
     }
+  }
+  /**
+   * Direct link when it reaches the chosen person; otherwise the mesh node of that person
+   * (or of the paired phone while its direct link is down).
+   */
+  function sendPath(): { kind: "direct" | "mesh" | "none"; target?: string } {
+    const peer = chatPeerRef.current;
+    if (paired.current && (!peer || (peer.device && peer.device === peerId.current))) return { kind: "direct" };
+    const target = peer?.id || (meshDirRef.current[peerMeshId.current] ? peerMeshId.current : "");
+    if (target && meshEnabledRef.current) return { kind: "mesh", target };
+    return { kind: "none" };
+  }
+  async function sendMesh(target: string, value: string, kind: string, language: string, template?: string) {
+    const key = meshDirRef.current[target]?.key;
+    if (!key)
+      throw new Error("Setting up encryption with this person. Try again in a few seconds.");
+    const body = JSON.stringify({ k: "chat", text: value.slice(0, 900), lang: language, name: ref.current.name, dev: ref.current.deviceId, alert: kind === "alert" || undefined });
+    const id = await Native.sendMeshPrivate(target, key, body);
+    await add({ id, kind, text: value, language, time: Date.now(), direction: "out", status: "queued", template, mesh: true, recipient: target, private: true });
   }
   async function send(
     content: string,
@@ -798,7 +903,14 @@ export default function App() {
   ) {
     const value = content.trim();
     if (!value) return;
-    if (kind === "alert" && !paired.current)
+    const path = sendPath();
+    if (path.kind === "mesh") {
+      await sendMesh(path.target!, value, kind, language, template);
+      feedback();
+      setText("");
+      return;
+    }
+    if (kind === "alert" && path.kind === "none")
       throw new Error(
         "Pair both phones before sending an alert. Alerts are never queued.",
       );
@@ -818,12 +930,15 @@ export default function App() {
       try {
         await wire(m);
       } catch (e) {
+        // The direct link failed; reach the same person through the mesh if possible.
+        const fallback = meshDirRef.current[peerMeshId.current] && meshEnabledRef.current ? peerMeshId.current : "";
         change({
-          messages: ref.current.messages.map((x) =>
-            x.id === m.id ? { ...x, status: "failed" } : x,
-          ),
+          messages: fallback
+            ? ref.current.messages.filter((x) => x.id !== m.id)
+            : ref.current.messages.map((x) => (x.id === m.id ? { ...x, status: "failed" } : x)),
         });
-        throw e;
+        if (!fallback) throw e;
+        await sendMesh(fallback, value, kind, language, template);
       }
     }
     feedback();
@@ -869,16 +984,29 @@ export default function App() {
       deviceId: ref.current.deviceId,
     });
     if (!(await result)) {
-      await control("release").catch(() => {});
+      await control("release").catch(() => { });
       throw new Error("Channel busy or peer did not respond");
     }
     localFloor.current = true;
   }
   async function sendOriginal(uri: string) {
+    // The speaker's own transcript lets the receiver read and hear it in their language.
+    const transcript = packsRef.current[clipLanguage.current]
+      ? String(await Native.transcribeVoice(uri, clipLanguage.current).catch(() => "")).trim().slice(0, 1000)
+      : "";
+    const path = sendPath();
+    if (path.kind === "mesh") {
+      if (!transcript)
+        throw new Error("Voice cannot travel privately over the mesh. Use Translated speech or connect directly.");
+      await sendMesh(path.target!, transcript, "text", clipLanguage.current);
+      feedback();
+      return;
+    }
     const m: Message = {
       id: uid(),
       kind: "voice",
-      text: "Voice message",
+      text: transcript || "Voice message",
+      transcript: transcript || undefined,
       audioUri: uri,
       language: clipLanguage.current,
       time: Date.now(),
@@ -914,6 +1042,8 @@ export default function App() {
         clearTimeout(maxRecording.current);
         if (state === "recording") {
           feedback();
+          recordSince.current = Date.now();
+          // Mesh voice notes are capped at 3 seconds; direct clips at 20.
           maxRecording.current = setTimeout(() => ptt.current.release(), 20000);
         }
         if (state === "processing") setBusy("Processing your voice…");
@@ -974,11 +1104,33 @@ export default function App() {
       },
     });
   const begin = () => {
-    if (!busy && !audioBusy.current) ptt.current.press();
+    setPttHint("");
+    if (!busy && !audioBusy.current && !remoteFloor.current) ptt.current.press();
   };
   const end = () => {
+    // A tap is not a message: cancel quietly instead of sending a clip that is too short.
+    if (recordingRef.current && Date.now() - recordSince.current < 500) {
+      ptt.current.cancel();
+      setPttHint("Keep holding while you speak");
+      return;
+    }
     ptt.current.release();
   };
+  /**
+   * One row per phone: Bluetooth and Wi-Fi Direct results with the same name are merged.
+   * Bluetooth is preferred because it connects without a system prompt on the other phone.
+   */
+  function phoneRows() {
+    const rank = (p: any) => (p.verified ? 2 : 0) + (p.transport === "bluetooth" ? 1 : 0);
+    const byName = new Map<string, any>();
+    for (const p of peers) {
+      const key = String(p.name || p.id).trim().toLowerCase();
+      const seen = byName.get(key);
+      const transports = new Set([...(seen?.transports || []), p.transport]);
+      byName.set(key, { ...(seen && rank(seen) >= rank(p) ? seen : p), transports: [...transports] });
+    }
+    return [...byName.values()].sort((a, b) => rank(b) - rank(a));
+  }
   const findPhones = () =>
     run(async () => {
       setConnectionState("scanning");
@@ -1142,22 +1294,6 @@ export default function App() {
       run(() => Native.shareMeshPosition(JSON.stringify({ off: true, time: Date.now(), expires: Date.now() + 30000 })));
     }
   };
-  const toggleMesh = (on: boolean) =>
-    run(async () => {
-      if (!on) {
-        Mesh.stop();
-        setMeshActive(false);
-        setMeshPeers([]);
-        return;
-      }
-      await permissions("radio");
-      const id = await Mesh.start();
-      meshIdRef.current = id;
-      meshEnabledRef.current = true;
-      setMeshNode(id);
-      setMeshActive(true);
-      if (ref.current.shareLocation) askPublicLocation();
-    });
   async function refreshPermissions() {
     try {
       setPermState(await permissionStatus());
@@ -1175,7 +1311,7 @@ export default function App() {
       const state = JSON.parse(await Native.radioState());
       setRadios(state);
       if (!state.bluetooth && granted.nearby !== "denied" && granted.nearby !== "blocked")
-        await Native.enableBluetooth().catch(() => {});
+        await Native.enableBluetooth().catch(() => { });
     });
   function permissionCard() {
     const row = (icon: string, name: string, detail: string, ok: boolean | undefined, action: string, fix?: () => any) => (
@@ -1199,10 +1335,10 @@ export default function App() {
       permState[group] === undefined
         ? null
         : row(icon, name, detail, permState[group] === "granted", permState[group] === "blocked" ? "Open settings" : "Allow", () =>
-            permState[group] === "blocked" || permsAsked
-              ? Native.openSystemSettings(settings)
-              : allowAll(),
-          );
+          permState[group] === "blocked" || permsAsked
+            ? Native.openSystemSettings(settings)
+            : allowAll(),
+        );
     const pending =
       Object.values(permState).some((v) => v !== "granted") ||
       radios.bluetooth === false || radios.location === false || radios.wifi === false;
@@ -1286,11 +1422,16 @@ export default function App() {
         expectedBytes,
       }),
       builtInVoice: details.builtInVoice === true,
+      builtInSpeech: details.builtInSpeech === true,
     };
   }
   /** Download / progress / remove controls for one pack, shown right where it is needed. */
   function packAction(code: string, name: string) {
     const p = packInfo(code);
+    if (p.builtInSpeech)
+      return (
+        <Text style={{ color: "#2BAA72", fontSize: 13 }}>✓ Built-in · works offline</Text>
+      );
     if (p.state === "installed")
       return (
         <View style={s.packLine}>
@@ -1399,7 +1540,7 @@ export default function App() {
   function languageCard() {
     const source = langOf(data.sourceSpeech),
       target = langOf(data.targetTranslation),
-      voice = langOf(data.ttsVoice);
+      voice = langOf(data.targetTranslation);
     return card(
       <>
         {label("🌐 LANGUAGE & VOICE")}
@@ -1428,27 +1569,24 @@ export default function App() {
           "Translate to",
           target?.native || "",
           () => setPicker("target"),
-          data.targetTranslation !== data.sourceSpeech ? (
-            <View style={s.rowExtra}>
-              <Text style={[s.small, { color: c.muted }]}>
-                Translation pack · Hindi ↔ Marathi
-              </Text>
-              {packAction("translation", i18n.translate("Shared translation", activeUi))}
-            </View>
-          ) : null,
-        )}
-        {settingRow(
-          "🔊",
-          "Voice",
-          voice?.native || "",
-          () => setPicker("tts"),
           <View style={s.rowExtra}>
-            {packInfo(data.ttsVoice).builtInVoice ? (
+            <Text style={[s.small, { color: c.muted }]}>
+              Messages you receive are shown and spoken in this language.
+            </Text>
+            {packInfo(data.targetTranslation).builtInVoice ? (
               <Text style={{ color: "#2BAA72", fontSize: 13 }}>
                 ✓ Built-in voice · no download
               </Text>
             ) : (
-              packAction(data.ttsVoice, voice?.name || data.ttsVoice)
+              packAction(data.targetTranslation, voice?.name || data.targetTranslation)
+            )}
+            {["hi", "mr"].includes(data.targetTranslation) && (
+              <>
+                <Text style={[s.small, { color: c.muted }]}>
+                  Translation pack · Hindi ↔ Marathi
+                </Text>
+                {packAction("translation", i18n.translate("Shared translation", activeUi))}
+              </>
             )}
           </View>,
         )}
@@ -1545,7 +1683,11 @@ export default function App() {
                     accessibilityRole="button"
                     accessibilityState={{ selected }}
                     onPress={() => {
-                      change({ [key]: l.code } as Partial<Settings>);
+                      change(
+                        (picker === "target"
+                          ? { targetTranslation: l.code, ttsVoice: l.code }
+                          : { [key]: l.code }) as Partial<Settings>,
+                      );
                       setPicker("");
                     }}
                     style={[
@@ -1611,16 +1753,33 @@ export default function App() {
           card(
             <>
               {note(
-                `${m.direction === "out" ? "You" : m.name || "Peer"} · ${m.language === "und" ? i18n.translate("Language unknown", activeUi) : m.language.toUpperCase()} · ${new Date(m.time).toLocaleTimeString()} · ${i18n.translate(m.mesh && m.status === "custody" ? "Relay accepted a piece; recipient delivery pending" : m.status, activeUi)}`,
+                `${m.direction === "out" ? "You" : m.name || "Peer"}${m.mesh ? (m.private ? " · 🔒📡" : " · 📢") : " · 🔒"} · ${m.language === "und" ? i18n.translate("Language unknown", activeUi) : m.language.toUpperCase()} · ${new Date(m.time).toLocaleTimeString()} · ${i18n.translate(m.mesh && m.status === "custody" ? "Relay accepted a piece; recipient delivery pending" : m.status, activeUi)}`,
               )}
               <NativeText selectable style={[s.message, { color: c.ink }]}>
                 {m.template
                   ? phrase(m.template, data.targetTranslation) || m.text
-                  : m.mesh && !m.transcript ? i18n.translate("Public voice note", activeUi) : m.text}
+                  : m.translated ||
+                  (m.kind === "voice"
+                    ? m.transcript || i18n.translate(m.mesh ? "Public voice note" : "Voice message", activeUi)
+                    : m.text)}
               </NativeText>
+              {!!m.translated && (
+                <NativeText selectable style={[s.small, { color: c.muted, marginTop: -6, marginBottom: 8 }]}>
+                  {`${m.language.toUpperCase()}: ${m.kind === "voice" ? m.transcript : m.text}`}
+                </NativeText>
+              )}
               <View style={s.row}>
-                {button("▶ Play", () => run(() => play(m), "Speaking…"), true)}
+                {(m.kind !== "voice" || !!m.translated || !!m.transcript) &&
+                  button(
+                    `▶ ${langOf(data.targetTranslation)?.native || "Play"}`,
+                    () => run(() => play(m), "Speaking…"),
+                    true,
+                  )}
+                {m.kind === "voice" &&
+                  !!m.audioUri &&
+                  button("▶ Original voice", () => run(() => play(m, true), "Speaking…"), true)}
                 {m.direction === "out" &&
+                  !m.mesh &&
                   m.status !== "delivered" &&
                   m.kind !== "alert" &&
                   button(
@@ -1649,6 +1808,45 @@ export default function App() {
         .catch((e: any) => setSensorStatus(e.message));
     else if (!ref.current.shareLocation && !meshSharingRef.current) Native.stopSensors();
   }, [tab, data.setup]);
+  // The mesh is always on while Talk2 is open; Android stops it in the background.
+  useEffect(() => {
+    if (!loaded || !data.setup || !appActive || meshActive || meshStarting.current) return;
+    if (Number(Platform.Version) >= 31 && permState.nearby !== "granted") return;
+    meshStarting.current = true;
+    Mesh.start()
+      .then((id) => {
+        meshIdRef.current = id;
+        meshEnabledRef.current = true;
+        setMeshNode(id);
+        setMeshActive(true);
+        setMeshIssue("");
+      })
+      .catch((e: any) => setMeshIssue(e.message || String(e)))
+      .finally(() => {
+        meshStarting.current = false;
+      });
+  }, [loaded, data.setup, appActive, meshActive, permState.nearby, radios.bluetooth]);
+  // Announce this phone so others, even several hops away, can list and message it.
+  useEffect(() => {
+    if (!meshActive) return;
+    const announce = async () => {
+      try {
+        if (!sealKey.current) sealKey.current = await Native.meshSealKey();
+        await Native.announceMesh(
+          JSON.stringify({ name: ref.current.name, role: ref.current.role, device: ref.current.deviceId, speak: ref.current.sourceSpeech, hear: ref.current.targetTranslation, key: sealKey.current }),
+        );
+      } catch {
+        // The next announcement retries.
+      }
+    };
+    announce();
+    const timer = setInterval(announce, 20000);
+    return () => clearInterval(timer);
+  }, [meshActive, data.name, data.targetTranslation]);
+  // Load translation and the playback voice early so the first message is not delayed.
+  useEffect(() => {
+    if (loaded && data.setup) Native.warmUp(data.targetTranslation).catch(() => { });
+  }, [loaded, data.setup, data.targetTranslation, packs.translation]);
   // Opening Connect while idle starts a scan right away.
   useEffect(() => {
     if (showConnect && !connected && ["idle", "failed"].includes(connectionState)) findPhones();
@@ -1681,53 +1879,98 @@ export default function App() {
       bounciness: 7,
     }).start();
   }, [pttScale, pttState]);
+  // Green: channel open. Blue: listening. Red: busy (peer speaking, processing or playing).
+  const channelBusy = peerTalking || pttState === "processing" || (!!busy && pttState === "idle");
+  const listening = pttState === "recording" || pttState === "arming";
   const mic = (
-    <Animated.View style={{ transform: [{ scale: pttScale }] }}>
-      <Pressable
+    <Animated.View style={{ transform: [{ scale: pttScale }], alignItems: "center" }}>
+      <View
+        accessible
         accessibilityRole="button"
-        accessibilityLabel="Hold to record, release to send"
-        disabled={!!busy}
-        onPressIn={begin}
-        onPressOut={end}
-        delayLongPress={120}
+        accessibilityLabel={localized("Hold to talk")}
+        // Keep the touch even if the finger moves, so the scroll view cannot cut a recording short.
+        onStartShouldSetResponder={() => true}
+        onResponderTerminationRequest={() => false}
+        onResponderGrant={begin}
+        onResponderRelease={end}
+        onResponderTerminate={end}
         style={[
           s.mic,
-          {
-            backgroundColor:
-              pttState === "recording"
-                ? "#D47743"
-                : pttState === "arming"
-                  ? "#2D8DD0"
-                  : "#347453",
-          },
+          { backgroundColor: listening ? "#2D8DD0" : channelBusy ? "#D35D5D" : "#2BAA72" },
         ]}
       >
-        <Text style={{ color: "#FFF", fontSize: 28 }}>
+        <NativeText style={{ color: "#FFF", fontSize: 26 }}>
+          {listening ? "🎙" : channelBusy ? "⏳" : "●"}
+        </NativeText>
+        <Text style={{ color: "#FFF", fontWeight: "800", textAlign: "center" }}>
           {pttState === "recording"
-            ? "■"
-            : pttState === "processing"
-              ? "…"
-              : "●"}
-        </Text>
-        <Text style={{ color: "#FFF", fontWeight: "700" }}>
-          {pttState === "recording"
-            ? "Release to send · max 20s"
+            ? "Listening… release to send"
             : pttState === "arming"
               ? "Starting…"
-              : pttState === "processing"
-                ? "Processing…"
-                : "Hold to talk"}
+              : peerTalking
+                ? "Busy · peer is speaking"
+                : channelBusy
+                  ? "Busy…"
+                  : "Hold to talk"}
         </Text>
-      </Pressable>
+      </View>
+      {!!pttHint && (
+        <Text style={[s.small, { color: c.muted }]}>{pttHint}</Text>
+      )}
     </Animated.View>
   );
+  const meshPeople = Object.values(meshDir)
+    .filter((p: any) => clock - p.lastSeen < 90000 && !(connected && p.device && p.device === peerId.current))
+    .sort((a: any, b: any) => a.hops - b.hops);
+  const startChat = (p: any) => {
+    setChatPeer(p);
+    setShowConnect(false);
+    setTab("talk");
+    setRoute("");
+  };
+  function peopleList() {
+    return (
+      <>
+        {label("📡 PEOPLE ON THE MESH")}
+        {meshPeople.length === 0 ? (
+          <Text style={[s.small, { color: c.muted }]}>
+            {meshActive ? "Looking for people nearby…" : meshIssue || "Mesh is starting…"}
+          </Text>
+        ) : (
+          meshPeople.map((p: any) => (
+            <View key={p.id} style={[s.peerRow, { backgroundColor: c.card, borderColor: c.line }]}>
+              <View style={[s.peerIcon, { backgroundColor: p.hops ? "#FBE9DF" : "#E8F3EC" }]}>
+                <NativeText style={{ fontSize: 18 }}>{p.hops ? "🔀" : "📡"}</NativeText>
+              </View>
+              <View style={{ flex: 1 }}>
+                <NativeText numberOfLines={1} style={{ color: c.ink, fontWeight: "700", fontSize: 15 }}>
+                  {p.name}
+                </NativeText>
+                <NativeText style={[s.small, { color: c.muted, marginTop: 0 }]}>
+                  {`${i18n.translate(roleLabels[p.role] || "Unknown role", activeUi)} · ${p.hops ? `${i18n.translate("via", activeUi)} ${p.hops} ${i18n.translate(p.hops === 1 ? "phone" : "phones", activeUi)}` : i18n.translate("Nearby", activeUi)}`}
+                </NativeText>
+              </View>
+              <Pressable accessibilityRole="button" onPress={() => startChat(p)} style={s.joinButton}>
+                <Text style={{ color: "#FFF", fontWeight: "700" }}>
+                  {chatPeer?.id === p.id ? "Chatting" : "Message"}
+                </Text>
+              </Pressable>
+            </View>
+          ))
+        )}
+      </>
+    );
+  }
   const fresh = locationPolicy.usableLocation(location, clock) && locationPolicy.usableLocation(peerLocation, clock);
   const compassReliable = !!compassMeta && clock - compassMeta.time < 3000 && compassMeta.accuracy >= 2 && compassMeta.trueNorth === true;
   const radarHeading = compassReliable ? heading : 0;
   const polar = fresh ? position(location, peerLocation, radarHeading) : null;
   const radarDistance = polar ? polar.distance : null;
   const discoveredPeers = [
-    ...Object.values(meshLocations).filter((p:any) => clock - p.lastSeen < 300000),
+    ...Object.values({
+      ...meshLocations,
+      ...Object.fromEntries(meshPeople.map((p: any) => [p.id, { ...meshLocations[p.id], ...p, transport: "BLE mesh", route: p.hops ? "relayed" : "direct", coords: meshLocations[p.id]?.coords }])),
+    }).filter((p: any) => clock - p.lastSeen < 300000 && !(connected && p.device && p.device === peerId.current)),
     ...(connected ? [{ id: peerId.current || "paired", name: peerName, role: peerRole, transport: "Paired direct", connected: true, route: "direct", coords: peerLocation, lastSeen: peerLocation?.time }] : []),
   ];
   const visiblePeers = locationPolicy.peerView(discoveredPeers, peerFilter, location, radarHeading, clock);
@@ -1781,35 +2024,35 @@ export default function App() {
         </Text>
         {step === 0 ? (
           <>
-          {card(
-            <>
-              {label("YOUR PROFILE")}
-              {profilePhoto()}
-              {field(
-                data.name,
-                (x) => change({ name: x.slice(0, 40) }),
-                "Your name",
-              )}
-              {note("Your name is shared only with a paired phone.")}
-              {title("Choose your role")}
-              {Object.entries(roleLabels).map(([role, roleText]) =>
-                button(
-                  roleText,
-                  () => change({ role }),
-                  data.role !== role,
-                  false,
-                ),
-              )}
-              {data.role === "emergency_staff" &&
-                note(
-                  "Unverified emergency staff. Role verification is not available yet. You can skip future email OTP and continue without internet.",
+            {card(
+              <>
+                {label("YOUR PROFILE")}
+                {profilePhoto()}
+                {field(
+                  data.name,
+                  (x) => change({ name: x.slice(0, 40) }),
+                  "Your name",
                 )}
-              <Text style={[s.small, { color: "#B84A29" }]}>
-                🔒 Choose carefully: your role can't be changed later.
-              </Text>
-            </>,
-          )}
-          {permissionCard()}
+                {note("Your name is shared only with a paired phone.")}
+                {title("Choose your role")}
+                {Object.entries(roleLabels).map(([role, roleText]) =>
+                  button(
+                    roleText,
+                    () => change({ role }),
+                    data.role !== role,
+                    false,
+                  ),
+                )}
+                {data.role === "emergency_staff" &&
+                  note(
+                    "Unverified emergency staff. Role verification is not available yet. You can skip future email OTP and continue without internet.",
+                  )}
+                <Text style={[s.small, { color: "#B84A29" }]}>
+                  🔒 Choose carefully: your role can't be changed later.
+                </Text>
+              </>,
+            )}
+            {permissionCard()}
           </>
         ) : step === 1 ? (
           <>
@@ -1955,16 +2198,29 @@ export default function App() {
             <View style={s.row}>
               <View style={{ flex: 1 }}>
                 {title(
-                  connected
-                    ? "● Connected"
-                    : connectionState === "reconnecting"
-                      ? "◌ Reconnecting…"
-                      : "○ Ready when you are",
+                  sendPath().kind === "direct"
+                    ? `● ${peerName}`
+                    : chatPeer
+                      ? `● ${chatPeer.name}`
+                      : connectionState === "reconnecting"
+                        ? "◌ Reconnecting…"
+                        : "○ Ready when you are",
                 )}
                 {note(
-                  connected || connectionState === "reconnecting"
-                    ? peerName
-                    : "Messages stay here until you connect.",
+                  sendPath().kind === "direct"
+                    ? "🔒 Private · direct link"
+                    : chatPeer
+                      ? `🔒 ${i18n.translate("Private · via mesh", activeUi)}${meshDir[chatPeer.id]?.hops ? ` · ${meshDir[chatPeer.id].hops} ${i18n.translate(meshDir[chatPeer.id].hops === 1 ? "phone" : "phones", activeUi)}` : ""}`
+                      : connectionState === "reconnecting"
+                        ? meshDir[peerMeshId.current]
+                          ? "Messages go through the mesh meanwhile."
+                          : peerName
+                        : "Messages stay here until you connect.",
+                )}
+                {!!chatPeer && (
+                  <Pressable hitSlop={8} onPress={() => setChatPeer(null)}>
+                    <Text style={{ color: "#1769AA", fontSize: 13, fontWeight: "700" }}>✕ End chat</Text>
+                  </Pressable>
                 )}
               </View>
               {button(connected ? "Disconnect" : "Connect", () =>
@@ -2017,7 +2273,7 @@ export default function App() {
             )}
             {mic}
             {button(
-              connected ? "Send message" : "Save for later",
+              sendPath().kind !== "none" ? "Send message" : "Save for later",
               () => run(() => send(text)),
               false,
               !text.trim() || !!busy,
@@ -2037,17 +2293,11 @@ export default function App() {
                 <Text style={{ color: c.ink, fontSize: 17, fontWeight: "800" }}>Nearby mesh</Text>
                 <NativeText style={[s.small, { color: c.muted, marginTop: 0 }]}>
                   {meshActive
-                    ? `${meshPeers.length} ${i18n.translate("phones linked", activeUi)}`
-                    : i18n.translate("Off · reach phones without internet", activeUi)}
+                    ? `${meshPeers.length} ${i18n.translate("phones linked", activeUi)} · ${meshPeople.length} ${i18n.translate("people reachable", activeUi)}`
+                    : meshIssue || i18n.translate("Mesh is starting…", activeUi)}
                 </NativeText>
               </View>
-              <Switch
-                accessibilityLabel={localized("Nearby mesh")}
-                value={meshActive}
-                onValueChange={toggleMesh}
-                trackColor={{ false: c.line, true: "#9CD5B2" }}
-                thumbColor={meshActive ? "#347453" : "#DDD"}
-              />
+              <View style={[s.netDot, { backgroundColor: meshActive ? "#2BAA72" : "#E0A030" }]} />
             </View>
             {option(
               "📍",
@@ -2074,7 +2324,7 @@ export default function App() {
         )}
         {card(
           <>
-            {label("📢 MESSAGE NEARBY PHONES")}
+            {label("📢 PUBLIC MESSAGE TO EVERYONE NEARBY")}
             <Field
               value={meshText}
               onChangeText={setMeshText}
@@ -2120,7 +2370,7 @@ export default function App() {
               </Pressable>
             </View>
             <Text style={[s.small, { color: c.muted }]}>
-              Mesh messages are public: nearby phones can read them.
+              Anyone nearby, including relaying phones, can read this. For a private message, tap Message on a person.
             </Text>
             <Pressable
               accessibilityRole="button"
@@ -2155,7 +2405,7 @@ export default function App() {
     content = (
       <>
         {label(
-          connected
+          sendPath().kind !== "none"
             ? "SEND TO YOUR PAIRED PHONE"
             : "CONNECT BEFORE SENDING AN ALERT",
         )}
@@ -2176,7 +2426,7 @@ export default function App() {
                     },
                   ]),
                 false,
-                !connected,
+                sendPath().kind === "none",
               )}
             </>,
             key,
@@ -2203,7 +2453,7 @@ export default function App() {
                   },
                 ]),
               false,
-              !connected || !text.trim(),
+              sendPath().kind === "none" || !text.trim(),
             )}
           </>,
         )}
@@ -2427,9 +2677,11 @@ export default function App() {
       />
       <View style={s.header}>
         <View>
-          <Text style={[s.brand, { color: c.ink }]}>
-            Talk<Text style={{ color: "#D47743" }}>2</Text>
-          </Text>
+          {/* The app name is never translated: NativeText bypasses localization ("Talk" is also a tab label). */}
+          <NativeText accessibilityLabel={i18n.BRAND} style={[s.brand, { color: c.ink }]}>
+            {i18n.BRAND.slice(0, -1)}
+            <NativeText style={{ color: "#D47743" }}>{i18n.BRAND.slice(-1)}</NativeText>
+          </NativeText>
           <Text style={{ color: c.muted, fontSize: 11, letterSpacing: 1 }}>
             A LITTLE CLOSER
           </Text>
@@ -2464,11 +2716,11 @@ export default function App() {
           <Text style={{ color: c.ink, flex: 1 }}>
             {progress
               ? i18n.packProgressLabel(
-                  langOf(progress.pack)?.name || i18n.translate("Shared translation", activeUi),
-                  progress.done,
-                  progress.total,
-                  data.ui,
-                )
+                langOf(progress.pack)?.name || i18n.translate("Shared translation", activeUi),
+                progress.done,
+                progress.total,
+                data.ui,
+              )
               : "Preparing download…"}
           </Text>
           <Pressable
@@ -2563,27 +2815,27 @@ export default function App() {
                           : busyLink
                             ? "#E0A030"
                             : connectionState === "failed"
-                            ? "#D35D5D"
-                            : "#2D8DD0",
+                              ? "#D35D5D"
+                              : "#2D8DD0",
                     },
                   ]}
                 >
                   {busyLink ? (
                     <ActivityIndicator color="#FFF" />
                   ) : (
-                  <NativeText style={{ fontSize: 18 }}>
-                    {connected || connectionState === "connected"
-                      ? "✅"
-                      : connectionState === "failed"
-                        ? "⚠️"
-                        : connectionState === "scanning"
-                          ? "🔍"
-                          : connectionState === "hosting"
-                            ? "📡"
-                            : connectionState === "joining" || connectionState === "pairing"
-                              ? "🔗"
-                              : "📱"}
-                  </NativeText>
+                    <NativeText style={{ fontSize: 18 }}>
+                      {connected || connectionState === "connected"
+                        ? "✅"
+                        : connectionState === "failed"
+                          ? "⚠️"
+                          : connectionState === "scanning"
+                            ? "🔍"
+                            : connectionState === "hosting"
+                              ? "📡"
+                              : connectionState === "joining" || connectionState === "pairing"
+                                ? "🔗"
+                                : "📱"}
+                    </NativeText>
                   )}
                 </View>
                 <View style={{ flex: 1 }}>
@@ -2591,20 +2843,20 @@ export default function App() {
                     {connected
                       ? "Talk2 connection active"
                       : connectionState === "reconnecting"
-                      ? "Reconnecting…"
-                      : connectionState === "scanning"
-                      ? "Scanning for Talk2 devices"
-                      : connectionState === "hosting"
-                        ? "Waiting for another phone"
-                        : connectionState === "joining"
-                          ? "Connecting to selected phone"
-                          : connectionState === "pairing"
-                            ? "Pairing requires confirmation"
-                            : connectionState === "connected"
-                              ? "Talk2 connection active"
-                              : connectionState === "failed"
-                                ? "Connection needs attention"
-                                : "Ready to connect"}
+                        ? "Reconnecting…"
+                        : connectionState === "scanning"
+                          ? "Scanning for Talk2 devices"
+                          : connectionState === "hosting"
+                            ? "Waiting for another phone"
+                            : connectionState === "joining"
+                              ? "Connecting to selected phone"
+                              : connectionState === "pairing"
+                                ? "Pairing requires confirmation"
+                                : connectionState === "connected"
+                                  ? "Talk2 connection active"
+                                  : connectionState === "failed"
+                                    ? "Connection needs attention"
+                                    : "Ready to connect"}
                   </Text>
                   <Text style={[s.small, { color: c.muted, marginTop: 2 }]}>
                     {radioStatus}
@@ -2626,164 +2878,113 @@ export default function App() {
                   </Pressable>
                 </View>
               ) : (
-              <>
-              {connectionState === "failed" && (
-                <Pressable accessibilityRole="button" onPress={findPhones} style={[s.hint, { borderColor: "#D35D5D", marginBottom: 8 }]}>
-                  <Text style={{ color: c.ink, fontWeight: "700" }}>↻ Try again</Text>
-                </Pressable>
-              )}
-              <View style={[s.steps, { backgroundColor: c.card, borderColor: c.line }]}>
-                {[
-                  "Open this screen on both phones",
-                  "Tap Find phones on both (or Host on one)",
-                  "Tap the other phone's name",
-                  "Check the code matches on both screens",
-                ].map((step, i) => (
-                  <View key={step} style={s.stepRow}>
-                    <NativeText style={s.stepNumber}>{i + 1}</NativeText>
-                    <Text style={{ color: c.ink, flex: 1, fontSize: 14 }}>{step}</Text>
+                <>
+                  {connectionState === "failed" && (
+                    <Pressable accessibilityRole="button" onPress={findPhones} style={[s.hint, { borderColor: "#D35D5D", marginBottom: 8 }]}>
+                      <Text style={{ color: c.ink, fontWeight: "700" }}>↻ Try again</Text>
+                    </Pressable>
+                  )}
+                  <View style={[s.steps, { backgroundColor: c.card, borderColor: c.line }]}>
+                    {[
+                      "Open this screen on both phones",
+                      "Tap Find phones on both (or make one visible)",
+                      "Tap the other phone's name",
+                      "Check the code matches on both screens",
+                    ].map((step, i) => (
+                      <View key={step} style={s.stepRow}>
+                        <NativeText style={s.stepNumber}>{i + 1}</NativeText>
+                        <Text style={{ color: c.ink, flex: 1, fontSize: 14 }}>{step}</Text>
+                      </View>
+                    ))}
                   </View>
-                ))}
-              </View>
-              {label("CONNECT USING")}
-              <View style={s.segment}>
-                {[
-                  ["bluetooth", "ᛒ", "Bluetooth"],
-                  ["wifi", "📶", "Wi-Fi Direct"],
-                  ["all", "⚡", "Both"],
-                ].map(([value, icon, text]) => (
                   <Pressable
-                    key={value}
                     accessibilityRole="button"
-                    accessibilityState={{ selected: transport === value }}
-                    onPress={() => setTransport(value)}
-                    style={[
-                      s.segmentItem,
-                      { borderColor: c.line },
-                      transport === value && s.segmentActive,
-                    ]}
+                    disabled={connectionState === "scanning"}
+                    onPress={findPhones}
+                    style={[s.bigAction, { opacity: connectionState === "scanning" ? 0.6 : 1 }]}
                   >
-                    <NativeText
-                      style={{
-                        fontSize: 18,
-                        textAlign: "center",
-                        color: transport === value ? "#FFF" : "#1769AA",
-                        fontWeight: "800",
-                      }}
-                    >
-                      {icon}
-                    </NativeText>
-                    <Text
-                      style={{
-                        color: transport === value ? "#FFF" : c.ink,
-                        fontWeight: "700",
-                        textAlign: "center",
-                        fontSize: 13,
-                      }}
-                    >
-                      {text}
+                    <NativeText style={{ fontSize: 22 }}>🔍</NativeText>
+                    <Text style={{ color: "#FFF", fontWeight: "800", fontSize: 16 }}>
+                      {connectionState === "scanning" ? "Scanning…" : "Find phones"}
                     </Text>
                   </Pressable>
-                ))}
-              </View>
-              <Pressable
-                accessibilityRole="button"
-                disabled={connectionState === "scanning"}
-                onPress={findPhones}
-                style={[s.bigAction, { opacity: connectionState === "scanning" ? 0.6 : 1 }]}
-              >
-                <NativeText style={{ fontSize: 22 }}>🔍</NativeText>
-                <Text style={{ color: "#FFF", fontWeight: "800", fontSize: 16 }}>
-                  {connectionState === "scanning" ? "Scanning…" : "Find phones"}
-                </Text>
-              </Pressable>
-              <View style={s.pillRow}>
-                {(transport === "all" ? ["bluetooth", "wifi"] : [transport]).map((x) => (
                   <Pressable
-                    key={x}
                     accessibilityRole="button"
                     disabled={hostingTransport !== null}
                     onPress={() =>
                       run(async () => {
                         setConnectionState("hosting");
-                        setHostingTransport(x as "wifi" | "bluetooth");
-                        setRadioStatus(x === "wifi" ? "Starting Wi-Fi host…" : "Starting Bluetooth host…");
+                        setHostingTransport("bluetooth");
+                        setRadioStatus("Starting Bluetooth host…");
                         await permissions("radio");
-                        if (x === "bluetooth") await Native.bluetoothDiscoverable();
-                        await Native.host(x);
+                        await Native.bluetoothDiscoverable();
+                        await Native.host("bluetooth");
                       })
                     }
-                    style={[
-                      s.hostButton,
-                      { borderColor: c.line, opacity: hostingTransport !== null && hostingTransport !== x ? 0.45 : 1 },
-                    ]}
+                    style={[s.hostButton, { borderColor: c.line }]}
                   >
                     <NativeText style={{ fontSize: 18 }}>📡</NativeText>
                     <Text style={{ color: c.ink, fontWeight: "700", fontSize: 13, textAlign: "center" }}>
-                      {hostingTransport === x
-                        ? x === "wifi" ? "Hosting Wi-Fi…" : "Hosting Bluetooth…"
-                        : x === "wifi" ? "Host Wi-Fi" : "Host Bluetooth"}
+                      {hostingTransport ? "Visible · waiting for a phone…" : "Make this phone visible"}
                     </Text>
                   </Pressable>
-                ))}
-              </View>
-              {label("PHONES FOUND")}
-              {peers.length === 0 ? (
-                <Text style={[s.small, { color: c.muted }]}>
-                  {connectionState === "scanning"
-                    ? "Searching… keep the other phone's Connect screen open."
-                    : "No phones yet. Tap Find phones on both phones."}
-                </Text>
-              ) : (
-                [...peers]
-                  .sort((a, b) => Number(!!b.verified) - Number(!!a.verified))
-                  .map((p) => (
-                    <View
-                      key={p.transport + p.id}
-                      style={[s.peerRow, { backgroundColor: c.card, borderColor: c.line }]}
-                    >
-                      <View style={[s.peerIcon, { backgroundColor: p.transport === "wifi" ? "#E8F3EC" : "#E3F0FB" }]}>
-                        <NativeText style={{ fontSize: 18, color: "#1769AA", fontWeight: "800" }}>
-                          {p.transport === "wifi" ? "📶" : "ᛒ"}
-                        </NativeText>
-                      </View>
-                      <View style={{ flex: 1 }}>
-                        <NativeText style={{ color: c.ink, fontWeight: "700", fontSize: 15 }} numberOfLines={1}>
-                          {p.name}
-                        </NativeText>
-                        <Text style={[s.small, { color: p.verified ? "#2BAA72" : c.muted, marginTop: 0 }]}>
-                          {p.verified
-                            ? p.transport === "wifi" ? "Talk2 · Wi-Fi Direct" : "Talk2 · Bluetooth"
-                            : "Nearby phone · Bluetooth"}
-                        </Text>
-                      </View>
-                      <Pressable
-                        accessibilityRole="button"
-                        disabled={!!joiningId}
-                        onPress={() =>
-                          run(async () => {
-                            setJoiningId(p.transport + p.id);
-                            setConnectionState("joining");
-                            setRadioStatus(`${i18n.translate("Connecting to", activeUi)} ${p.name || "Talk2"}…`);
-                            await Native.join(p.transport, p.id);
-                          })
-                        }
-                        style={[s.joinButton, { opacity: joiningId && joiningId !== p.transport + p.id ? 0.4 : 1 }]}
-                      >
-                        {joiningId === p.transport + p.id ? (
-                          <View style={s.packLine}>
-                            <ActivityIndicator color="#FFF" size="small" />
-                            <Text style={{ color: "#FFF", fontWeight: "700" }}>Connecting…</Text>
+                  {label("PHONES FOUND")}
+                  {peers.length === 0 ? (
+                    <Text style={[s.small, { color: c.muted }]}>
+                      {connectionState === "scanning"
+                        ? "Searching… keep the other phone's Connect screen open."
+                        : "No phones yet. Tap Find phones on both phones."}
+                    </Text>
+                  ) : (
+                    phoneRows()
+                      .map((p) => (
+                        <View
+                          key={p.transport + p.id}
+                          style={[s.peerRow, { backgroundColor: c.card, borderColor: c.line }]}
+                        >
+                          <View style={[s.peerIcon, { backgroundColor: p.transport === "wifi" ? "#E8F3EC" : "#E3F0FB" }]}>
+                            <NativeText style={{ fontSize: 18, color: "#1769AA", fontWeight: "800" }}>
+                              {p.transport === "wifi" ? "📶" : "ᛒ"}
+                            </NativeText>
                           </View>
-                        ) : (
-                          <Text style={{ color: "#FFF", fontWeight: "700" }}>Connect</Text>
-                        )}
-                      </Pressable>
-                    </View>
-                  ))
+                          <View style={{ flex: 1 }}>
+                            <NativeText style={{ color: c.ink, fontWeight: "700", fontSize: 15 }} numberOfLines={1}>
+                              {p.name}
+                            </NativeText>
+                            <Text style={[s.small, { color: p.verified ? "#2BAA72" : c.muted, marginTop: 0 }]}>
+                              {p.verified
+                                ? p.transport === "wifi" ? "Talk2 · Wi-Fi Direct" : "Talk2 · Bluetooth"
+                                : "Nearby phone · Bluetooth"}
+                            </Text>
+                          </View>
+                          <Pressable
+                            accessibilityRole="button"
+                            disabled={!!joiningId}
+                            onPress={() =>
+                              run(async () => {
+                                setJoiningId(p.transport + p.id);
+                                setConnectionState("joining");
+                                setRadioStatus(`${i18n.translate("Connecting to", activeUi)} ${p.name || "Talk2"}…`);
+                                await Native.join(p.transport, p.id);
+                              })
+                            }
+                            style={[s.joinButton, { opacity: joiningId && joiningId !== p.transport + p.id ? 0.4 : 1 }]}
+                          >
+                            {joiningId === p.transport + p.id ? (
+                              <View style={s.packLine}>
+                                <ActivityIndicator color="#FFF" size="small" />
+                                <Text style={{ color: "#FFF", fontWeight: "700" }}>Connecting…</Text>
+                              </View>
+                            ) : (
+                              <Text style={{ color: "#FFF", fontWeight: "700" }}>Connect</Text>
+                            )}
+                          </Pressable>
+                        </View>
+                      ))
+                  )}
+                </>
               )}
-              </>
-              )}
+              {peopleList()}
             </ScrollView>
           </View>
         </View>

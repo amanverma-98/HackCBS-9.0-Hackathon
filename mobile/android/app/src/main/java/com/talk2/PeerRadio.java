@@ -42,7 +42,8 @@ public final class PeerRadio {
  PeerRadio(Context c,Events e){context=c;events=e;wifi=(WifiP2pManager)c.getSystemService(Context.WIFI_P2P_SERVICE);channel=wifi==null?null:wifi.initialize(c,Looper.getMainLooper(),null);BluetoothManager bm=(BluetoothManager)c.getSystemService(Context.BLUETOOTH_SERVICE);bluetooth=bm==null?null:bm.getAdapter();
   IntentFilter f=new IntentFilter();f.addAction(WifiP2pManager.WIFI_P2P_PEERS_CHANGED_ACTION);f.addAction(WifiP2pManager.WIFI_P2P_CONNECTION_CHANGED_ACTION);f.addAction(BluetoothDevice.ACTION_FOUND);f.addAction(BluetoothDevice.ACTION_UUID);f.addAction(BluetoothAdapter.ACTION_DISCOVERY_FINISHED);
   if(Build.VERSION.SDK_INT>=33)c.registerReceiver(receiver,f,Context.RECEIVER_EXPORTED);else c.registerReceiver(receiver,f);
-  timer.scheduleAtFixedRate(()->{Session s=session;if(s!=null&&s.local&&s.remote){try{if(System.currentTimeMillis()-s.lastRead>30000)throw new IOException("Peer stopped responding");s.write("HEARTBEAT");}catch(Exception ex){lost(generation,ex);}}},8,8,TimeUnit.SECONDS);
+  // Heartbeat writes go through io: a stalled socket must never block the timer that drives reconnects.
+  timer.scheduleAtFixedRate(()->{Session s=session;long g=generation;if(s!=null&&s.local&&s.remote){if(System.currentTimeMillis()-s.lastRead>30000){lost(g,new IOException("Peer stopped responding"));return;}io.execute(()->{try{s.write("HEARTBEAT");}catch(Exception ex){lost(g,ex);}});}},8,8,TimeUnit.SECONDS);
  }
  private void emit(String type,JSONObject data){if(!type.equals("peer")&&!type.equals("message"))Log.i("Talk2Radio",type+" "+(type.equals("pairing")?"":data.toString()));try{events.event(type,data);}catch(Exception ignored){}}
  private void emit(String type,String key,String value){try{emit(type,new JSONObject().put(key,value));}catch(Exception ignored){}}

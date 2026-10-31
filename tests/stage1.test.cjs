@@ -50,6 +50,16 @@ test("Hindi and Gujarati UI strings are bundled with full coverage", () => {
   assert.equal(i18n.translate("Talk", "gu"), "વાત કરો");
 });
 
+test("the app name Talk2 is never translated", () => {
+  for (const language of Object.keys(i18n.resources)) {
+    assert.equal(i18n.translate(i18n.BRAND, language), "Talk2");
+    for (const [key, value] of Object.entries(i18n.resources[language])) {
+      const count = (text) => (text.match(/talk2/gi) || []).length;
+      assert.equal(count(String(value)), count(key), `${language}: "${key}" must keep Talk2`);
+    }
+  }
+});
+
 test("download progress is reported in megabytes", () => {
   assert.equal(i18n.mb(395000000), "376.7");
   assert.equal(i18n.packProgressLabel("Hindi", 1048576 * 12.3, 1048576 * 377.3, "en"), "Hindi: 12.3 of 377.3 MB downloaded");

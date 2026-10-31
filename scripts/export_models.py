@@ -102,6 +102,9 @@ def export_model(repo_id, lang_code):
             "output": {0: "batch", 1: "sequence_length"},
         },
         opset_version=15,
+        # Newer PyTorch defaults to the dynamo exporter, which needs onnxscript and emits a
+        # different graph; the app was validated against the TorchScript exporter.
+        dynamo=False,
     )
 
     # Restricted to MatMul/Gemm: quantising Mul/Add trips shape-inference bugs here.
