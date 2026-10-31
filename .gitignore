@@ -1,0 +1,189 @@
+# ============================================================
+# Node.js / React Native dependencies
+# ============================================================
+
+node_modules/
+.npm/
+.yarn/
+.pnpm-store/
+
+# ============================================================
+# Environment files and secrets
+# ============================================================
+
+.env
+.env.*
+!.env.example
+!.env.template
+
+# Android service credentials
+google-services.json
+GoogleService-Info.plist
+
+# Signing keys and certificates
+*.keystore
+*.jks
+*.p12
+*.pfx
+*.pem
+*.key
+*.cer
+*.crt
+
+# ============================================================
+# Android / Gradle generated files
+# ============================================================
+
+.gradle/
+**/.gradle/
+
+build/
+**/build/
+
+.cxx/
+**/.cxx/
+
+.externalNativeBuild/
+**/.externalNativeBuild/
+
+local.properties
+
+captures/
+*.iml
+
+# ============================================================
+# React Native generated files
+# ============================================================
+
+.metro-cache/
+.metro/
+.react/
+.expo/
+.expo-shared/
+
+# ============================================================
+# Build artifacts and release files
+# ============================================================
+
+dist/
+out/
+release/
+*.apk
+*.aab
+*.apks
+*.aab.sha256
+*.apk.sha256
+*.mapping.txt
+
+# ============================================================
+# ONNX and downloaded model files
+# ============================================================
+
+*.onnx
+*.onnx.data
+*.onnx.data*
+*.ort
+*.tflite
+*.bin
+*.part
+*.download
+*.tmp
+
+# Keep model metadata, manifests, vocabularies, and scripts tracked.
+# Do not ignore *.json globally because the project needs JSON files.
+
+# ============================================================
+# Python generated files
+# ============================================================
+
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+env/
+
+# ============================================================
+# Logs and temporary files
+# ============================================================
+
+*.log
+*.log.*
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+*.pid
+*.seed
+*.pid.lock
+*.swp
+*.swo
+*.tmp
+*.temp
+*.bak
+*.orig
+
+# ============================================================
+# IDE files
+# ============================================================
+
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+
+*.sublime-project
+*.sublime-workspace
+
+# ============================================================
+# Operating-system files
+# ============================================================
+
+.DS_Store
+.AppleDouble
+.LSOverride
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# ============================================================
+# Coverage and test output
+# ============================================================
+
+coverage/
+.nyc_output/
+.pytest_cache/
+test-results/
+playwright-report/
+
+# ============================================================
+# Temporary archives
+# ============================================================
+
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+
+# ============================================================
+# Local development data
+# ============================================================
+
+data/
+tmp/
+temp/
+.cache/
+.cache-loader/
+
+# ============================================================
+# GitHub Actions local files
+# ============================================================
+
+.github/*.local

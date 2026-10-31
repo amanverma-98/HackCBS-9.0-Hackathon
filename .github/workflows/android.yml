@@ -1,0 +1,38 @@
+name: Talk2 Android
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+  pull_request:
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: android-actions/setup-android@v3
+      - run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0' 'ndk;26.1.10909125'
+      - run: npm ci
+      - run: npm run check
+      - name: Java encryption and model integrity tests
+        run: bash scripts/test-java.sh
+      - name: Verify no Kotlin source is tracked
+        run: test -z "$(git ls-files '*.kt' '*.kts')"
+      - name: Build standalone APK and unsigned release AAB
+        working-directory: mobile/android
+        run: |
+          chmod +x gradlew
+          ./gradlew :app:assembleStandalone :app:bundleRelease
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Talk2-android-builds
+          path: |
+            mobile/android/app/build/outputs/apk/standalone/*.apk
+            mobile/android/app/build/outputs/bundle/release/*.aab

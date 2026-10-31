@@ -1,0 +1,2 @@
+package com.talk2; import com.facebook.react.*;import com.facebook.react.bridge.*;import com.facebook.react.uimanager.ViewManager;import java.util.*;
+public class Talk2Package implements ReactPackage {public List<NativeModule> createNativeModules(ReactApplicationContext c){return Arrays.asList(new Talk2Module(c));} public List<ViewManager> createViewManagers(ReactApplicationContext c){return Collections.emptyList();}}

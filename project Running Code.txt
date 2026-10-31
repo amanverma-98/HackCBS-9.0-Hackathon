@@ -1,0 +1,9 @@
+Terminal 1 - 
+D:\Users\SomuData\Desktop\Projects\Talk2-ASTRA> npm install
+adb devices
+adb reverse tcp:8081 tcp:8081
+npm run start -w mobile
+
+To Install Fresh app 
+Terminal 2 
+PS D:\Users\SomuData\Desktop\Projects\Talk2-ASTRA\mobile\android> .\gradlew :app:installDebug
