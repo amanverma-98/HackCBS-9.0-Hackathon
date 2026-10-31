@@ -14,6 +14,7 @@ export function createServer(env = process.env, fetcher = fetch) {
       });
       res.end(JSON.stringify(data));
     };
+
     const url = new URL(req.url, "http://localhost");
     if (req.method === "GET" && url.pathname === "/health")
       return json(200, {
@@ -21,6 +22,7 @@ export function createServer(env = process.env, fetcher = fetch) {
         ok: true,
         gptConfigured: !!env.OPENAI_API_KEY && !!env.OPENAI_MODEL,
       });
+
     if (req.method === "GET" && url.pathname === "/api/models") {
       if (!env.MODEL_MANIFEST_PATH)
         return json(503, { error: "Model manifest is not configured" });
@@ -65,17 +67,20 @@ export function createServer(env = process.env, fetcher = fetch) {
           return json(413, { error: "Request too large" });
       }
       let data;
+
       try {
         data = JSON.parse(body);
       } catch {
         return json(400, { error: "Invalid JSON" });
       }
+
       if (
         typeof data.text !== "string" ||
         !data.text.trim() ||
         data.text.length > 2000
       )
         return json(400, { error: "text must contain 1–2000 characters" });
+        
       const response = await fetcher("https://api.openai.com/v1/responses", {
         method: "POST",
         headers: {
