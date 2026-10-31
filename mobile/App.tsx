@@ -94,6 +94,8 @@ type Colors = {
   muted: string;
   line: string;
 };
+
+
 const templates = alertData as Record<string, Record<string, string>>;
 const langs = LANGUAGES as { code: string; native: string; name: string }[];
 const uid = () => `${Date.now()}-${Math.random().toString(36).slice(2, 14)}`;
@@ -121,6 +123,8 @@ const initial: Settings = {
   voiceMode: "translated",
   messages: [],
 };
+
+
 const tabKeys = ["Talk", "Radar", "Alert", "History", "Settings"];
 function Button({
   title,

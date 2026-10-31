@@ -9,6 +9,7 @@ react {
  hermesCommand = file('../../../node_modules/react-native/sdks/hermesc/%OS-BIN%/' + hermesBin).absolutePath
  autolinkLibrariesWithApp()
 }
+
 android {
  namespace 'com.talk2'
  compileSdk rootProject.ext.compileSdkVersion
