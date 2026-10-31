@@ -341,7 +341,7 @@ export default function App() {
       if (label) setBusy("");
     }
   };
-  
+
   const wire = async (m: any) => Native.send(JSON.stringify(m));
   const sendPosition = async (fix: any) => {
     if (!locationPolicy.usableLocation(fix)) return;
@@ -362,6 +362,7 @@ export default function App() {
       deviceId: ref.current.deviceId,
       ...extra,
     });
+
   const status = async (source = manifest || upstream) => {
     const p = JSON.parse(await Native.packStatus(JSON.stringify(source)));
     const installed = Object.fromEntries(
@@ -374,6 +375,7 @@ export default function App() {
     setPacks(installed);
     setPackDetails(p);
   };
+
   const add = async (m: Message) =>
     persist(update({ messages: prune([...ref.current.messages, m]) }));
   const phrase = (key: string, language: string) =>
@@ -390,6 +392,7 @@ export default function App() {
         await Native.playVoice(m.audioUri);
         return;
       }
+
       const target = ref.current.targetTranslation;
       if (ref.current.ttsVoice !== target)
         throw new Error(
@@ -412,6 +415,8 @@ export default function App() {
     }
   }
 
+
+
   async function receive(m: any) {
     if (!validMessage(m)) return;
     if (m.kind === "ack") {
@@ -424,6 +429,8 @@ export default function App() {
       });
       return;
     }
+
+
     if (m.kind === "profile") {
       peerLabel.current = String(m.name || "Peer").slice(0, 40);
       setPeerName(peerLabel.current);
@@ -437,11 +444,15 @@ export default function App() {
       setPeerLocation(null);
       return;
     }
+
+
     if (m.kind === "position") {
       const fix = { ...m.coords, time: m.time - Math.max(0, Number(m.ageMs) || 0), expires: m.expires || m.time + 30000 };
       if (locationPolicy.usableLocation(fix)) setPeerLocation(fix);
       return;
     }
+
+    
     if (!["text", "alert", "voice"].includes(m.kind)) return;
     if (
       !ref.current.messages.some((x) => x.id === m.id && x.direction === "in")
