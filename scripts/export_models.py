@@ -24,12 +24,15 @@ import os
 import shutil
 import sys
 
+
 import torch
 from huggingface_hub import hf_hub_download
 from onnxruntime.quantization import QuantType, quantize_dynamic
 from transformers import Wav2Vec2ForCTC
 
+
 OUT_DIR = os.environ.get("TALK2_MODEL_OUTPUT", "model-assets")
+
 
 # A private model needs $env:HF_TOKEN set; huggingface_hub picks it up automatically.
 LANGUAGES = {
@@ -49,6 +52,8 @@ LANGUAGES = {
     # English one), it is the standard public English wav2vec2 CTC checkpoint.
     "en": "facebook/wav2vec2-base-960h",
 }
+
+
 
 # Talk2 permits an explicit replacement checkpoint for a missing upstream registry entry.
 # Regenerate both weight and vocab together; this is not recovery of the old APK weights.
