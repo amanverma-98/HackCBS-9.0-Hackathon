@@ -13,7 +13,8 @@ export const Mesh = {
   sendText: (destination: string, text: string) =>
     Native.sendMeshText(destination, text) as Promise<boolean>,
   sendSOS: (text: string) => Native.sendMeshSOS(text) as Promise<boolean>,
-  acknowledgeInbox: (id: string) => Native.acknowledgeMeshInbox(id) as Promise<boolean>,
+  acknowledgeInbox: (id: string) =>
+    Native.acknowledgeMeshInbox(id) as Promise<boolean>,
 };
 /** Runtime permissions every feature can need, grouped the way onboarding shows them. */
 export function runtimeGroups(): Record<string, string[]> {
@@ -22,7 +23,12 @@ export function runtimeGroups(): Record<string, string[]> {
     mic: ["RECORD_AUDIO"],
     location: ["ACCESS_FINE_LOCATION", "ACCESS_COARSE_LOCATION"],
   };
-  if (api >= 31) groups.nearby = ["BLUETOOTH_SCAN", "BLUETOOTH_CONNECT", "BLUETOOTH_ADVERTISE"];
+  if (api >= 31)
+    groups.nearby = [
+      "BLUETOOTH_SCAN",
+      "BLUETOOTH_CONNECT",
+      "BLUETOOTH_ADVERTISE",
+    ];
   if (api >= 33) {
     groups.wifiNearby = ["NEARBY_WIFI_DEVICES"];
     groups.notifications = ["POST_NOTIFICATIONS"];
@@ -36,8 +42,14 @@ export type GroupState = "granted" | "denied" | "blocked";
 export async function permissionStatus(): Promise<Record<string, GroupState>> {
   const result: Record<string, GroupState> = {};
   for (const [group, names] of Object.entries(runtimeGroups())) {
-    const granted = (await Promise.all(names.map((n) => PermissionsAndroid.check(perm(n))))).every(Boolean);
-    result[group] = granted ? "granted" : names.some((n) => blocked.has(n)) ? "blocked" : "denied";
+    const granted = (
+      await Promise.all(names.map((n) => PermissionsAndroid.check(perm(n))))
+    ).every(Boolean);
+    result[group] = granted
+      ? "granted"
+      : names.some((n) => blocked.has(n))
+        ? "blocked"
+        : "denied";
   }
   return result;
 }
@@ -47,7 +59,8 @@ export async function requestAllPermissions() {
   const names = Object.values(runtimeGroups()).flat();
   const result = await PermissionsAndroid.requestMultiple(names.map(perm));
   for (const n of names) {
-    if ((result as Record<string, string>)[perm(n)] === "never_ask_again") blocked.add(n);
+    if ((result as Record<string, string>)[perm(n)] === "never_ask_again")
+      blocked.add(n);
     else blocked.delete(n);
   }
   return permissionStatus();
