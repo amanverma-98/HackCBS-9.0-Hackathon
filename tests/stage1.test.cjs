@@ -21,6 +21,7 @@ test("settings migration preserves legacy values and separates language roles", 
   assert.deepEqual(migrateSettings({ messages: "bad" }).messages, []);
 });
 
+
 test("self-selection, OTP claims, and unsigned profile packets never display verification", () => {
   assert.deepEqual(verificationDisplay("citizen", { verified: true, signed: true }), {
     label: "Self-declared role", verified: false,
@@ -30,6 +31,8 @@ test("self-selection, OTP claims, and unsigned profile packets never display ver
   });
   assert.equal(verificationDisplay("emergency_staff", { signed: true, verified: true }).verified, false);
 });
+
+
 
 test("localization falls back structurally and reports missing coverage", () => {
   assert.equal(i18n.translate("Talk", "mr"), "बोला");

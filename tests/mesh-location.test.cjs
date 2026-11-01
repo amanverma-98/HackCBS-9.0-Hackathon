@@ -10,6 +10,7 @@ const fixAt = (time, latitude = 18.52, longitude = 73.85, accuracy = 12) => ({ l
 const received = (body, hops = 0) => ({ ...body, sender: "node-A", hops });
 const bFix = (now) => fixAt(now - 1000, 18.521, 73.851, 8);
 
+
 test("A starts sharing while B is connected: B shows A's location at once", () => {
   const a = new LocationPublisher();
   assert.equal(a.shouldPublish(fixAt(T0), T0, "start"), false, "nothing is sent before sharing is on");
@@ -23,6 +24,7 @@ test("A starts sharing while B is connected: B shows A's location at once", () =
   assert.equal(peer.located, true);
   assert.ok(peer.polar.distance > 50 && peer.polar.distance < 400);
 });
+
 
 test("B connects after A started sharing: A resends on the new neighbour without moving", () => {
   const a = new LocationPublisher();
@@ -39,6 +41,7 @@ test("B connects after A started sharing: A resends on the new neighbour without
   assert.equal(a.shouldPublish(fixAt(T0 + HEARTBEAT_MS), T0 + HEARTBEAT_MS, "heartbeat"), true, "heartbeat keeps it alive for late joiners");
 });
 
+
 test("A sends a newer location; out-of-order and duplicate updates are rejected", () => {
   const a = new LocationPublisher();
   a.setSharing(true);
@@ -53,6 +56,7 @@ test("A sends a newer location; out-of-order and duplicate updates are rejected"
   assert.equal(mergeLocationPeer(store, first, T0 + 4700), store, "older packet arriving late is ignored");
   assert.equal(mergeLocationPeer(store, newer, T0 + 4800), store, "duplicate is ignored");
 });
+
 
 test("A stops sharing: B clears the live location and older updates cannot resurrect it", () => {
   const a = new LocationPublisher();
