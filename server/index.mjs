@@ -79,8 +79,9 @@ export function createServer(env = process.env, fetcher = fetch) {
         !data.text.trim() ||
         data.text.length > 2000
       )
+
         return json(400, { error: "text must contain 1–2000 characters" });
-        
+
       const response = await fetcher("https://api.openai.com/v1/responses", {
         method: "POST",
         headers: {
@@ -97,6 +98,7 @@ export function createServer(env = process.env, fetcher = fetch) {
         }),
         signal: AbortSignal.timeout(35000),
       });
+      
       if (!response.ok)
         return json(502, {
           error: "AI provider request failed",
