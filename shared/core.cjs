@@ -17,6 +17,7 @@ function position(a, b, heading = 0) {
     p = a.latitude * r,
     q = b.latitude * r,
     dl = (b.longitude - a.longitude) * r;
+
   const h =
     Math.sin((q - p) / 2) ** 2 +
     Math.cos(p) * Math.cos(q) * Math.sin(dl / 2) ** 2;
@@ -27,6 +28,7 @@ function position(a, b, heading = 0) {
       Math.cos(p) * Math.sin(q) - Math.sin(p) * Math.cos(q) * Math.cos(dl),
     ) / r,
   );
+  
   return { distance, bearing, relative: wrap(bearing - heading) };
 }
 function validMessage(m, now = Date.now()) {
