@@ -196,3 +196,6 @@ temp/
 
 # Built-in TTS voices are large binaries; see docs/BUILD.md to regenerate them.
 mobile/android/app/src/main/assets/voices/*.onnx
+
+# Model files exported for upload to the GitHub release (large; never commit them).
+model-release/

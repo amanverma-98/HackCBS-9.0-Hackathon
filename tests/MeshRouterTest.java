@@ -71,6 +71,18 @@ public final class MeshRouterTest {
    check(echoEvents.isEmpty(),"own echoed position is not delivered to the app");
    check(echoOut.stream().skip(sends).noneMatch(w->{try{MeshPacket x=MeshPacket.parse(w);return x.id().equals(own.id())&&x.json.optInt("hops")>0;}catch(Exception e){return false;}}),"own echoed position is not re-flooded");
   }finally{ra3.close();}
-  System.out.println("MeshRouterTest PASS: custody destination, recipient ACK identity, final hop, duplicate ACK recovery, control capacity, SOS priority, voice cleanup, multi-hop presence, retained broadcast for late neighbours, reconnect flush, relayed position identity, duplicate suppression, own-echo suppression");
+  // Full outbox: background traffic gives way to messages and SOS; a clear error only when it is all unsent own messages.
+  File fullDir=Files.createTempDirectory("mesh-full").toFile();MeshRouter rf=new MeshRouter(new File(fullDir,"a.json"),a,(t,d)->{},(n,w)->{},false);
+  rf.extension=new MeshRouter.Extension(){public boolean accept(MeshPacket p,String in){return true;}public void tick(){}public void custody(String body){}};
+  try{for(int i=0;i<10;i++)rf.receive("B-link",MeshPacket.create("position",id(b),"*","{\"time\":"+i+"}",1,b).wire());
+   check(new JSONObject(ModelStore.read(new File(fullDir,"a.json"))).getJSONArray("queue").length()==1,"relayed positions from one phone supersede each other");
+   for(int i=0;i<MeshRouter.MAX_QUEUE;i++){KeyPair k=key();rf.receive("B-link",MeshPacket.create("presence",id(k),"*","{}",1,k).wire());}
+   check(new JSONObject(ModelStore.read(new File(fullDir,"a.json"))).getJSONArray("queue").length()==MeshRouter.MAX_QUEUE,"outbox full of relayed presence");
+   rf.send("text","*","still goes out");rf.send("sos","*","help");
+   int accepted=0;boolean refused=false;try{for(int i=0;i<MeshRouter.MAX_QUEUE+5;i++){rf.send("text",UUID.randomUUID().toString(),"waiting "+i);accepted++;}}catch(IOException e){refused=e.getMessage().startsWith("Too many messages");}
+   check(refused&&accepted==MeshRouter.MAX_QUEUE-2,"own unsent messages fill the outbox: clear error after "+accepted);
+   rf.send("sos","*","second SOS still accepted");
+  }finally{rf.close();}
+  System.out.println("MeshRouterTest PASS: full outbox prioritises messages and SOS, custody destination, recipient ACK identity, final hop, duplicate ACK recovery, control capacity, SOS priority, voice cleanup, multi-hop presence, retained broadcast for late neighbours, reconnect flush, relayed position identity, duplicate suppression, own-echo suppression");
  }
 }

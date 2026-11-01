@@ -91,6 +91,7 @@ export function MeshVoicePanel({
       setBusy(false);
     }
   };
+<<<<<<< HEAD
   return (
     <View style={{ gap: 10, paddingVertical: 12 }}>
       <Text style={{ color }}>
@@ -192,4 +193,32 @@ export function MeshVoicePanel({
       )}
     </View>
   );
+=======
+  return <View style={{ gap: 10, paddingVertical: 12 }}>
+    <Text style={{color}}>{t("Public mesh voice · maximum 3 seconds")}</Text>
+    <Text style={{color}}>{t("Audio and transcripts are public. Every receiving phone and relay can read them. Use paired direct mode for private voice.")}</Text>
+    <Button title={t(recording ? "Finish public recording" : "Record public note")} disabled={busy || !active} onPress={recording ? stop : record} />
+    {!!draft && <>
+      <Button title={t("Play original draft")} onPress={() => Native.playVoice(draft, 0).catch((e: any) => setError(e.message))} />
+      <Button title={t("Add source transcript (optional)")} disabled={busy} onPress={async () => {
+        setBusy(true); setError(""); try { const reason = require("../../shared/language-state.cjs").recognitionReason(language, installed, available); if (reason) throw new Error(t(reason)); const text = await Native.transcribeVoice(draft, language);
+          if (text.length > 256) throw new Error(t("Transcript exceeds 256 characters. Original audio is still available."));
+          setTranscript(text);
+        } catch (e: any) { setError(e.message); } finally { setBusy(false); }
+      }} />
+      <Text style={{color}}>{language}{transcript ? `: ${transcript}` : ""}</Text>
+      <Button title={t("Broadcast public voice")} disabled={busy || !active} onPress={() => Alert.alert(
+        t("Broadcast public voice?"), t("Nearby phones and relays can listen. This audio is not private."), [
+          { text: t("Cancel"), style: "cancel" },
+          { text: t("Broadcast public voice"), onPress: async () => {
+            setBusy(true); setError(""); try { const id = await Native.sendMeshVoice(draft, language, transcript);
+              await onSent(id, draft, language, transcript); setDraft(""); setTranscript("");
+            } catch (e: any) { setError(e.message); } finally { setBusy(false); }
+          } },
+        ],
+      )} />
+    </>}
+    {!!error && <Text style={{color}} accessibilityRole="alert">{t(error)}</Text>}
+  </View>;
+>>>>>>> ca0b81cf6bd8af384207257cab5f07e47bfe9ed7
 }

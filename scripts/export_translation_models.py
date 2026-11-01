@@ -32,11 +32,21 @@ from onnxruntime.quantization import quantize_dynamic, QuantType
 
 OUTPUT_DIR = os.environ.get("TALK2_MODEL_OUTPUT", "model-assets")
 
-# IndicTrans2 indic-indic distilled 320M -- covers all 9 Indic languages + English.
-# Despite the "200M" naming of the individual indic-en / en-indic distilled models,
-# the indic-indic variant is a 320M model stitched from both of them; there is no
-# indictrans2-indic-indic-dist-200M repo on HuggingFace.
-MODEL_REPO = "ai4bharat/indictrans2-indic-indic-dist-320M"
+# Which IndicTrans2 direction to export (first command-line argument):
+#   indic-indic  ai4bharat/indictrans2-indic-indic-dist-320M -> pack "translation"
+#                (Indian languages to each other; no English)
+#   en-indic     ai4bharat/indictrans2-en-indic-dist-200M    -> pack "translation-en"
+#   indic-en     ai4bharat/indictrans2-indic-en-dist-200M    -> pack "translation-en"
+# All three repos are gated: accept the terms on huggingface.co and log in first.
+MODELS = {
+    "indic-indic": ("ai4bharat/indictrans2-indic-indic-dist-320M", "indictrans2-", ("hin_Deva", "ben_Beng", "मुझे मदद चाहिए")),
+    "en-indic": ("ai4bharat/indictrans2-en-indic-dist-200M", "indictrans2-en-indic-", ("eng_Latn", "hin_Deva", "I need help")),
+    "indic-en": ("ai4bharat/indictrans2-indic-en-dist-200M", "indictrans2-indic-en-", ("hin_Deva", "eng_Latn", "मुझे मदद चाहिए")),
+}
+DIRECTION = sys.argv[1] if len(sys.argv) > 1 else "indic-indic"
+if DIRECTION not in MODELS:
+    sys.exit(f"Unknown direction {DIRECTION!r}; choose one of {', '.join(MODELS)}")
+MODEL_REPO, PREFIX, SAMPLE = MODELS[DIRECTION]
 
 # FLORES-200 language tags used by IndicTrans2
 LANG_TAGS = [
@@ -126,6 +136,12 @@ def export_tokenizer_vocab(tokenizer, output_path: str):
         "src": {"vocab": src_regular, "special_tokens": src_special, "lang_tags": src_lang},
         "tgt": {"vocab": tgt_regular, "special_tokens": tgt_special, "lang_tags": tgt_lang},
     }
+    # Exact SentencePiece segmentation: the app merges the adjacent pair whose joined piece
+    # scores highest. The inferred merges above are only an approximation (wrong for English,
+    # e.g. "▁n eed" instead of "▁need") and are kept for older app builds.
+    sp = _find_spm_processor(tokenizer)
+    if sp is not None:
+        result["src"]["spm_scores"] = spm_scores(sp)
 
     with open(output_path, "w", encoding="utf-8") as f:
         json.dump(result, f, ensure_ascii=False, indent=None, separators=(",", ":"))
@@ -134,6 +150,15 @@ def export_tokenizer_vocab(tokenizer, output_path: str):
     print(f"  Saved vocab (src={len(src_regular)} tok/{len(src_lang)} tags, "
           f"tgt={len(tgt_regular)} tok/{len(tgt_lang)} tags, {len(merges)} shared merges) "
           f"→ {output_path} ({size_kb:.0f} KB)")
+
+
+def spm_scores(sp) -> dict:
+    """Piece -> score for every normal piece of a SentencePiece BPE model."""
+    return {
+        sp.IdToPiece(i): sp.GetScore(i)
+        for i in range(sp.GetPieceSize())
+        if not (sp.IsControl(i) or sp.IsUnknown(i) or sp.IsByte(i))
+    }
 
 
 def _find_spm_processor(tokenizer):
@@ -274,8 +299,8 @@ def export_onnx(model, tokenizer):
 
     encoder_fp32 = os.path.join(OUTPUT_DIR, "encoder-fp32.onnx")
     decoder_fp32 = os.path.join(OUTPUT_DIR, "decoder-fp32.onnx")
-    encoder_int8 = os.path.join(OUTPUT_DIR, "indictrans2-encoder-int8.onnx")
-    decoder_int8 = os.path.join(OUTPUT_DIR, "indictrans2-decoder-int8.onnx")
+    encoder_int8 = os.path.join(OUTPUT_DIR, f"{PREFIX}encoder-int8.onnx")
+    decoder_int8 = os.path.join(OUTPUT_DIR, f"{PREFIX}decoder-int8.onnx")
 
     # --- Export encoder ---
     print("\nExporting encoder to ONNX...")
@@ -297,6 +322,7 @@ def export_onnx(model, tokenizer):
             "encoder_hidden_states": {0: "batch", 1: "src_len"},
         },
         opset_version=15,
+        dynamo=False,
     )
     print(f"  Encoder FP32: {os.path.getsize(encoder_fp32) / 1e6:.1f} MB")
 
@@ -339,6 +365,7 @@ def export_onnx(model, tokenizer):
             "logits": {0: "batch", 1: "tgt_len"},
         },
         opset_version=15,
+        dynamo=False,
     )
     print(f"  Decoder FP32: {os.path.getsize(decoder_fp32) / 1e6:.1f} MB")
 
@@ -375,8 +402,8 @@ def verify_onnx(tokenizer):
     """
     print("\nVerifying ONNX models...")
 
-    encoder_path = os.path.join(OUTPUT_DIR, "indictrans2-encoder-int8.onnx")
-    decoder_path = os.path.join(OUTPUT_DIR, "indictrans2-decoder-int8.onnx")
+    encoder_path = os.path.join(OUTPUT_DIR, f"{PREFIX}encoder-int8.onnx")
+    decoder_path = os.path.join(OUTPUT_DIR, f"{PREFIX}decoder-int8.onnx")
 
     enc_session = onnxruntime.InferenceSession(encoder_path)
     dec_session = onnxruntime.InferenceSession(decoder_path)
@@ -386,8 +413,7 @@ def verify_onnx(tokenizer):
     print(f"  Decoder inputs:  {[i.name for i in dec_session.get_inputs()]}")
     print(f"  Decoder outputs: {[o.name for o in dec_session.get_outputs()]}")
 
-    src_lang, tgt_lang = "hin_Deva", "ben_Beng"
-    test_text = "मुझे मदद चाहिए"
+    src_lang, tgt_lang, test_text = SAMPLE
     print(f"\n  Test translate ({src_lang} -> {tgt_lang}): '{test_text}'")
 
     # [src_lang_tag] [tgt_lang_tag] [BPE tokens] [EOS] -- see
@@ -465,7 +491,7 @@ def main():
         sys.exit(1)
 
     # Export tokenizer vocab
-    vocab_path = os.path.join(OUTPUT_DIR, "indictrans2-vocab.json")
+    vocab_path = os.path.join(OUTPUT_DIR, f"{PREFIX}vocab.json")
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     export_tokenizer_vocab(tokenizer, vocab_path)
 

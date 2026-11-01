@@ -1,3 +1,4 @@
+const { validAccount } = require("./account.cjs");
 const SETTINGS_VERSION = 2;
 const ROLES = ["citizen", "volunteer", "medical_support", "emergency_staff"];
 const LANGUAGES = ["hi", "ta", "bn", "gu", "mr", "kn", "ml", "te", "or", "en"];
@@ -13,7 +14,9 @@ function migrateSettings(saved = {}, defaults = {}) {
     deviceId: typeof saved.deviceId === "string" && saved.deviceId ? saved.deviceId : (defaults.deviceId || ""),
     theme: ["system", "light", "dark"].includes(saved.theme) ? saved.theme : (defaults.theme || "system"),
     manifestUrl: typeof saved.manifestUrl === "string" ? saved.manifestUrl : (defaults.manifestUrl || ""),
-    backend: typeof saved.backend === "string" ? saved.backend : (defaults.backend || ""),
+    // The server address is built in (mobile/src/config.ts), not a user setting.
+    backend: defaults.backend || "",
+    account: validAccount(saved.account),
     shareLocation: saved.shareLocation === true,
     sirenEnabled: saved.sirenEnabled === true,
     photo: typeof saved.photo === "string" ? saved.photo : "",

@@ -84,3 +84,17 @@ test("volunteer onboarding is role based", async () => {
   assert.equal(found.status, 200);
   assert.deepEqual(found.body.volunteers.map((v) => v.name), ["M"]);
 });
+
+test("universal CORS: any origin, preflight with Authorization allowed", async () => {
+  const pre = await fetch(base + "/auth/me", {
+    method: "OPTIONS",
+    headers: { Origin: "https://any-site.example", "Access-Control-Request-Method": "GET", "Access-Control-Request-Headers": "authorization,content-type" },
+  });
+  assert.equal(pre.status, 204);
+  assert.equal(pre.headers.get("access-control-allow-origin"), "*");
+  assert.match(pre.headers.get("access-control-allow-headers"), /Authorization/i);
+  const health = await fetch(base + "/health", { headers: { Origin: "http://localhost:3000" } });
+  assert.equal(health.headers.get("access-control-allow-origin"), "*");
+  const root = await fetch(base.replace(/\/api$/, "/"));
+  assert.deepEqual(await root.json(), { name: "Talk2 backend", ok: true });
+});

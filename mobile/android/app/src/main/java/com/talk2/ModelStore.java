@@ -18,6 +18,7 @@ public final class ModelStore {
  private JSONArray validateSpec(String pack,JSONObject spec)throws Exception{
   JSONArray files=spec.getJSONArray("files");Set<String> required=new HashSet<>();
   if(pack.equals("translation")){required.add("indictrans2-encoder-int8.onnx");required.add("indictrans2-decoder-int8.onnx");required.add("indictrans2-vocab.json");}
+  else if(pack.equals("translation-en")){for(String d:new String[]{"en-indic","indic-en"}){required.add("indictrans2-"+d+"-encoder-int8.onnx");required.add("indictrans2-"+d+"-decoder-int8.onnx");required.add("indictrans2-"+d+"-vocab.json");}}
   else {if(!Arrays.asList("hi","ta","bn","gu","mr","kn","ml","te","or","en").contains(pack))throw new IOException("Unknown language pack");required.add("indicwav2vec-"+pack+"-int8.onnx");required.add("indicwav2vec-"+pack+"-vocab.json");required.add("vits-"+pack+"-int8.onnx");required.add("vits-"+pack+"-vocab.json");}
   if(files.length()!=required.size())throw new IOException("Incomplete pack manifest");
   for(int i=0;i<files.length();i++)if(!required.remove(files.getJSONObject(i).getString("name")))throw new IOException("Unexpected or duplicate pack file");
@@ -55,6 +56,12 @@ public final class ModelStore {
   if(!file(pack,"ready.json").exists()){verified.remove(pack);return false;}
   StringBuilder print=new StringBuilder();File[] files=new File(root,safe(pack)).listFiles();if(files!=null){Arrays.sort(files);for(File f:files)print.append(f.getName()).append(':').append(f.length()).append(':').append(f.lastModified()).append(';');}
   String key=print.toString();if(key.equals(verified.get(pack)))return true;boolean ok=ready(pack);if(ok)verified.put(pack,key);else verified.remove(pack);return ok;
+ }
+ /** Bytes to download when the release changed files of an installed pack (0 = up to date). install() fetches only those. */
+ long updateBytes(String pack,JSONObject spec)throws Exception{
+  File m=file(pack,"ready.json");if(spec==null||!m.exists())return 0;JSONArray have=new JSONObject(read(m)).getJSONArray("files"),want=validateSpec(pack,spec);
+  Map<String,String> installed=new HashMap<>();for(int i=0;i<have.length();i++)installed.put(have.getJSONObject(i).getString("name"),have.getJSONObject(i).getString("sha256"));
+  long total=0;for(int i=0;i<want.length();i++){JSONObject f=want.getJSONObject(i);if(!f.getString("sha256").equals(installed.get(f.getString("name"))))total+=f.getLong("bytes");}return total;
  }
  long partialBytes(String pack,JSONObject spec)throws Exception{if(spec==null)return 0;JSONArray fs=validateSpec(pack,spec);long total=0;for(int i=0;i<fs.length();i++){JSONObject entry=fs.getJSONObject(i);String name=safe(entry.getString("name"));long expected=entry.getLong("bytes");File complete=file(pack,name),part=file(pack,name+".part");if(complete.exists()&&complete.length()==expected)total+=expected;else if(part.exists())total+=Math.min(part.length(),expected);}return total;}
  void remove(String pack)throws Exception{verified.remove(pack);File d=new File(root,safe(pack));File[] files=d.listFiles();if(files!=null)for(File f:files)if(!f.delete())throw new IOException("Cannot remove "+f.getName());d.delete();}

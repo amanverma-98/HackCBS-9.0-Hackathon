@@ -590,3 +590,184 @@ Input commit: f4835c9 on `main`; the working tree was clean at the start. The wo
    - Icon appearance in light and dark themes.
    - The compass arrow and bearing outdoors with a calibrated compass.
 4. **The Nothing A142** was not connected for this run.
+
+## Playback, chat composer, translation coverage, People sheet (2026-11-01, uncommitted)
+
+### Translation error root cause
+The red "General offline translation for this pair is not validated" error came from
+English messages: the sender's speaking language was en. The installed pack is IndicTrans2
+**indic-indic** (`scripts/export_translation_models.py`), which has no English, and
+`TranslationEngine` only allowed hi<->mr. It was not related to the Hindi STT model.
+
+### Translation coverage
+- Added `IndicScript` (Brahmic block offsets to and from Devanagari, with Tamil nearest
+  letters and Malayalam chillu) and wired it into `TranslationEngine.translateRaw`, which
+  has a per-language tag map.
+- `scripts/validate-translation.ps1` plus `tests/TranslationCheck.java` run the real engine
+  on the JVM against the checksum-verified release pack.
+- Results:
+  - bn, gu, ta, te, kn and ml passed to and from hi/mr.
+  - Odia mistranslated ("hospital" became "post office") and stays disabled.
+  - mr->hi failed on the hospital sentence, a pre-existing quality limit; hi<->mr stays
+    enabled because it was already shipped.
+- The enabled set lives in `TranslationEngine.ENABLED` and `shared/translation-pairs.cjs`;
+  a test keeps them equal.
+- Unsupported pairs, including all English, show a muted "translation isn't available
+  offline · showing original" note and play the original voice.
+
+### Playback
+- `SpeechEngine.play(audio,start,stop)` serves both voice clips and TTS, with stoppable
+  write loops and a cached last synthesis.
+- `Talk2Module.playVoice(uri,start)` and `speak(text,lang,start)` return
+  `{position,done}`; `pausePlayback()` runs on the bridge thread.
+- UI: Play / Pause / Resume per clip, an animated `PlayingBars`, and starting another clip
+  pauses the current one.
+
+### Talk screen
+- A chat bar with a People button.
+- Bubbles in chat order, auto-scrolled. They have a definite width (row minus 12%) because
+  shrink-to-fit containers clipped Devanagari lines on Android.
+- A composer pinned above the nav bar: a growing `TextInput` and one round button (mic when
+  empty, send when there is text) with green/blue/red states. History keeps newest-first.
+
+### Mesh
+- `BleMeshTransport.burst()`: LOW_LATENCY scanning for 20 s at start, on refresh and when a
+  neighbour is lost, then BALANCED or LOW_POWER. Restarts are capped at one per 10 s.
+- Presence is announced immediately on a new link (at most once per 3 s).
+- The People sheet lists mesh people first with Chat and a "through N phones" route.
+  Bluetooth/Wi-Fi Direct pairing is a collapsed "Pair directly (optional)" section; its scan
+  runs only when that section is open, and the button is labelled Pair.
+- An incoming private mesh message selects its sender as the chat partner, and cards have a
+  Reply button.
+- Delivered mesh messages show "through N phones" or "direct" from the receipt hop count.
+
+### Checks
+- `npm run check`: 36/36 tests pass, including `tests/translation-pairs.test.cjs`;
+  `tsc --noEmit` is clean.
+- `scripts/test-java.ps1`: all suites pass, including the new `IndicScriptTest`.
+- `:app:assembleStandalone` succeeded: 286,340,773 bytes, SHA-256
+  F8AF683068365EE833889AA5338F2D9531B2EBAA59AE39E0E0D0ECEE1D166546.
+
+### On the phones
+Nothing A142 (Hindi UI):
+- the Talk screen with the pinned composer
+- English messages showing the muted note with Original voice only
+- Pause turning into Resume ("फिर शुरू करें")
+- note and message text no longer clipped
+
+### Not verified
+- Mesh burst timing, auto-reply and route labels between two or three phones.
+- Translated playback of a Gujarati or Tamil message.
+- The vivo and Samsung were disconnected for this round and still run the previous build.
+
+## Two-colour theme, new icon, message cue, SOS with siren and location (2026-11-01, uncommitted)
+
+### Theme
+- `mobile/src/theme.ts`: green #636b2f and cream #f8e6ca, plus tints mixed from the two.
+  Red is used only for SOS and errors.
+- Every hard-coded colour in `App.tsx` and `RadarPeers.tsx` now maps to `P.*`.
+- Dark mode, the theme pickers in onboarding and Settings, `useColorScheme`, and the
+  DayNight native theme are removed. `styles.xml` is Light, with cream window, status and
+  navigation bars, and `forceDarkAllowed=false`.
+
+### Icon
+- Generated from `mobile/Talk2Logo.png`:
+  - `mipmap-*` square and round PNGs at all five densities
+  - an adaptive icon in `mipmap-anydpi-v26`, with background #1e2952 sampled from the logo
+    and the foreground scaled to the safe zone
+- The manifest uses `@mipmap/ic_launcher`; the old vector `drawable/talk2_icon.xml` was
+  removed.
+
+### Receive cue
+- `Sounds.messageCue`: a soft A5–E6 chime on the notification stream plus a 35 ms
+  vibration at amplitude 70.
+- It plays for every non-SOS incoming message and respects the Sounds and Vibration
+  settings.
+
+### SOS
+- **Sending** (`App.tsx confirmSOS` / `sendSOS`):
+  - Every SOS (quick options, typed text, hold-to-record voice on the SOS tab, and the Radar
+    public box) asks "Send with my location" or "Send without location". It waits up to
+    8 s for a fix.
+  - It builds `shared/sos.cjs buildSOS` (name, role, text, location with accuracy, battery
+    via `Native.batteryLevel`, a voice flag).
+  - It sends to the paired phone (voice clip if any) **and** broadcasts `Mesh.sendSOS`
+    with the JSON payload.
+- **Receiving:**
+  - `parseSOS` validates the payload, and the shared SOS id de-duplicates the direct and
+    mesh copies.
+  - `Sounds.sosSiren` plays a 6 s 650–1200 Hz wail on the alarm stream with a strong
+    vibration, regardless of the sound setting.
+  - The detail sheet opens automatically.
+- **Cards:** SOS cards are red and are the only openable cards. The sheet shows sender, role
+  marked unverified, time, message, coordinates with accuracy, distance and direction from
+  this phone, battery, route, Play voice and Share location (`geo:` URI).
+
+### Radar
+- Every peer is drawn: a filled dot at the real position when a fresh shared location
+  exists, otherwise a hollow dot on the outer ring with the legend "No location (outer
+  ring)".
+
+### Checks
+- `npm run check`: 40/40, including `tests/sos.test.cjs`; `tsc` is clean.
+- Java suites all pass.
+- APK SHA-256 5D05C14C9BC76F35B27C6B609C5A840B35E6B16FAC252C5199BDFF356BE449A1.
+
+### On the phones
+- Installed on the Nothing A142. The theme renders on Talk and the SOS tab.
+
+### Not verified
+- The siren and chime sound.
+- An SOS between phones, including the location sheet.
+- The launcher icon appearance.
+- The vivo and Samsung (not connected).
+
+## English translation pack and darker green — 2026-11-01
+
+- Theme green darkened to `#4a5223` (`mobile/src/theme.ts`, `res/values/colors.xml`).
+- New optional pack `translation-en`: IndicTrans2 `en-indic-dist-200M` + `indic-en-dist-200M`, int8 ONNX,
+  six files in the gitignored `model-release/` (with `SHA256SUMS`), listed in
+  `model-host/upstream-manifest.json` under the `model-pack-v1` release URLs. Upload those six files to
+  that release; the in-app Download then works (the release build is not debuggable, so no sideload).
+- Tokenizer root cause: the app rebuilt BPE merges from piece ids, which mis-segments English
+  ("▁n eed", "▁h os p ital"), so "nearest" came out as "lowest" or transliterated. New vocab files carry
+  `src.spm_scores`; `TranslationEngine.Tokenizer` merges by highest SentencePiece score, matching
+  `src_spm.encode` exactly on all samples. Input punctuation is split Moses-style ("hospital ?") and
+  rejoined on output.
+- `scripts/validate-translation.ps1 -English`: all 18 en<->{hi,mr,bn,gu,or,ta,te,kn,ml} pairs pass.
+  English uses its own list (`ENGLISH` / `ENGLISH_TRANSLATION`, includes Odia); indic-indic is unchanged
+  (Odia off, mr->hi question sentence still fails).
+- Follow-up: the released indic-indic `indictrans2-vocab.json` has no `spm_scores`. Re-exporting it with
+  scores would likely fix mr->hi and Odia, but changes a released file's checksum.
+
+## Mesh outbox fix, exact tokenizer for both packs, keyboard, account backend — 2026-11-01
+
+- **"Mesh queue full; send later"** (blocked text and SOS): `MeshRouter` held 16 packets and refused every
+  send when full. Presence (every 20 s) and relayed location from every phone (30 s each) filled it, and a
+  full relay stopped taking custody, so the jam spread. Now: 48 slots; newest presence/location per phone
+  supersedes older copies; when full, the least valuable packet makes way (bulk voice < relayed
+  presence/location < own presence/location < broadcasts a neighbour already holds < relayed text < own
+  text < relayed SOS < own SOS). Receipt tracking and inbox drop their oldest entry instead of failing; a
+  full relay still shows a broadcast SOS locally. Only an outbox full of this phone's own unsent messages
+  gives a clear error. `sendSOS` no longer fails an SOS the paired phone already received. Test: full
+  outbox in `MeshRouterTest`.
+- **Translation**: the released Indian `indictrans2-vocab.json` (unchanged on the release) has no
+  SentencePiece scores. Its tokenizer is identical to indic-en's source side (same merges and src
+  dictionary), so the scores ship in the APK (`assets/translation/indic-spm-scores.tsv`, 2.9 MB) and
+  `TranslationEngine` uses them for the "translation" pack. Validated with the vocab downloaded from the
+  release: all 23 Indian pairs (Odia and mr->hi now pass) and 18 English pairs pass; Odia enabled.
+  Sentence-by-sentence translation, 30-word pieces for run-on speech (halved if unfinished), decode length
+  scaled to input, 64-entry cache. `ModelStore.updateBytes` + Settings "Improved version available" handle
+  future release file changes (only changed files download).
+- **Model downloads**: `scripts/check-release.mjs` compares the manifest with the live release (size,
+  SHA-256 digest, HTTPS redirect, Range resume). 2026-11-01: all 45 files in 11 packs OK.
+  `tests/model-manifest.test.cjs` checks file names against `ModelStore.validateSpec`/`safe()` offline.
+- **Keyboard**: targetSdk 35 on Android 15+ forces edge-to-edge, which disables `adjustResize`.
+  `values-v35/styles.xml` opts out (valid while targetSdk is 35; moving to 36 needs inset handling).
+  The tab bar hides while the keyboard is open; the chat stays scrolled to the newest message.
+- **Theme**: green `#343a16`, greenDark `#22270e`; secondary shades re-mixed.
+- **Backend**: universal CORS, `trust proxy`, `GET /`, `render.yaml` blueprint (MONGODB_URI from Atlas,
+  JWT_SECRET generated). App server `https://hackcbs-9-0-hackathon-3.onrender.com` (`mobile/src/config.ts`; not
+  editable in the app, no address shown). Verified live: health 200, login probe 401, CORS `*`. Settings -> Account (online) replaces the unimplemented
+  "Ask GPT" screen: log in / sign up with the onboarding role, volunteer details, volunteer search for
+  emergency staff, logout. Requests wait 70 s for a sleeping free Render service.

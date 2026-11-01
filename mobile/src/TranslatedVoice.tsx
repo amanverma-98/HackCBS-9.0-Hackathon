@@ -26,6 +26,7 @@ export function TranslatedVoice({
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false);
   const generation = useRef(0);
+<<<<<<< HEAD
   useEffect(() => {
     generation.current++;
     setTranslated("");
@@ -84,4 +85,21 @@ export function TranslatedVoice({
       )}
     </View>
   );
+=======
+  useEffect(() => { generation.current++; setTranslated(""); setError(""); }, [transcript, source, target]);
+  return <View style={{ gap: 8 }}>
+    <Text style={{color}}>{t("Original audio remains available")}</Text>
+    <Button title={t("Translate source transcript")} disabled={busy || !!state.translationReason} onPress={async () => {
+      setBusy(true); setError(""); const ticket = generation.current; try { const text = state.route === "identity" ? transcript : await Native.translate(transcript, source, target); if (ticket === generation.current) setTranslated(text); }
+      catch (e: any) { setError(e.message); } finally { setBusy(false); }
+    }} />
+    {!!translated && <Text style={{color}} selectable>{translated}</Text>}
+    <Button title={t("Play translated speech")} disabled={busy || !translated || !!state.speechReason} onPress={async () => {
+      setBusy(true); setError(""); try { await Native.speak(translated, tts, 0); }
+      catch (e: any) { setError(e.message); } finally { setBusy(false); }
+    }} />
+    {!!state.speechReason && <Text style={{color}}>{t(state.speechReason)}</Text>}
+    {!!error && <Text style={{color}} accessibilityRole="alert">{t(error)}</Text>}
+  </View>;
+>>>>>>> ca0b81cf6bd8af384207257cab5f07e47bfe9ed7
 }
