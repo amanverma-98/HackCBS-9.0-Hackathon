@@ -1,0 +1,6 @@
+<resources>
+    <!-- Android 15+ forces edge-to-edge for targetSdk 35, which stops adjustResize from lifting the
+         composer above the keyboard and draws the header under the status bar. Talk2 opts out so
+         the window resizes for the keyboard as before. Valid while targetSdk is 35. -->
+    <style name="AppTheme" parent="Theme.AppCompat.Light.NoActionBar"><item name="android:fontFamily">sans</item><item name="android:windowBackground">@color/talk2_cream</item><item name="android:windowLightStatusBar">true</item><item name="android:statusBarColor">@color/talk2_cream</item><item name="android:navigationBarColor">@color/talk2_cream</item><item name="android:forceDarkAllowed">false</item><item name="android:windowOptOutEdgeToEdgeEnforcement">true</item></style>
+</resources>

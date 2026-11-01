@@ -25,11 +25,33 @@ final class MeshRouter {
   */
  private static boolean retained(MeshPacket p){String t=p.type();return p.destination().equals("*")&&!t.equals("voice")&&!t.equals("ack")&&!t.equals("custody");}
  private static long keepUntil(MeshPacket p){long created=p.json.optLong("created");return Math.min(p.json.optLong("expires"),created+(p.type().equals("sos")||p.type().equals("text")?120000:30000));}
- /** Frees queue space by dropping the oldest retained broadcast that some neighbour already holds. */
- private boolean evictDelivered(){for(String id:new ArrayList<>(queue.keySet())){for(String k:delivered)if(k.startsWith(id+"@")){queue.remove(id);forget(id);return true;}}return false;}
+ /**
+  * How much a queued packet is worth keeping when the outbox is full (higher survives).
+  * Background traffic (bulk voice, presence, location, broadcasts a neighbour already holds)
+  * always gives way to messages, and this phone's own SOS is never pushed out.
+  */
+ private int value(String id,MeshPacket p){
+  String t=p.type();boolean own=p.sender().equals(nodeId);
+  if(t.equals("voice"))return p.priority()==0?1:3;
+  if(t.equals("presence")||t.equals("position"))return own?3:2;
+  for(String k:delivered)if(k.startsWith(id+"@"))return 4;
+  if(t.equals("sos"))return own?9:7;
+  return own?6:5;
+ }
+ /** Frees one slot for a packet worth `incoming` by dropping the oldest, least valuable packet worth less. */
+ private boolean makeRoom(int incoming){
+  if(queue.size()<MAX_QUEUE)return true;String victim=null;int worst=incoming;
+  for(Map.Entry<String,String> x:queue.entrySet()){int v;try{v=value(x.getKey(),MeshPacket.parse(x.getValue()));}catch(Exception expired){v=-1;}if(v<worst){worst=v;victim=x.getKey();}}
+  if(victim==null)return false;queue.remove(victim);forget(victim);return true;
+ }
+ /** Only the newest presence/location per phone is worth relaying; older queued copies are dropped. */
+ private void supersede(MeshPacket p){
+  if(!p.type().equals("presence")&&!p.type().equals("position"))return;
+  for(Map.Entry<String,String> x:new ArrayList<>(queue.entrySet()))try{MeshPacket old=MeshPacket.parse(x.getValue());if(old.type().equals(p.type())&&old.sender().equals(p.sender())&&!old.id().equals(p.id())&&old.json.optLong("created")<=p.json.optLong("created")){queue.remove(x.getKey());forget(x.getKey());}}catch(Exception ignored){}
+ }
  synchronized List<String> neighbors(){return new ArrayList<>(neighbors);}
  interface Sender { void send(String neighbor,String packet)throws Exception; }
- static final int MAX_NEIGHBORS=3,MAX_QUEUE=16,MAX_SEEN=256;
+ static final int MAX_NEIGHBORS=3,MAX_QUEUE=48,MAX_AWAITING=32,MAX_INBOX=48,MAX_SEEN=512,STORE_BOUND=2*1024*1024;
  private final Events events;private final Sender sender;private final LinkedHashMap<String,Long> seen=new LinkedHashMap<>();private final LinkedHashMap<String,String> queue=new LinkedHashMap<>(),awaitingReceipt=new LinkedHashMap<>(),inbox=new LinkedHashMap<>();private final LinkedHashMap<String,Long> sentAt=new LinkedHashMap<>();private final LinkedHashSet<String> neighbors=new LinkedHashSet<>();private final KeyPair identity;private final String nodeId;private final AtomicFile store;private final ScheduledExecutorService retry=Executors.newSingleThreadScheduledExecutor();
  MeshRouter(Context c,Events e,Sender s)throws Exception{this(new File(c.getFilesDir(),"mesh-outbox.json"),loadIdentity(),e,s,true);}
  MeshRouter(File file,KeyPair key,Events e,Sender s,boolean schedule)throws Exception{events=e;sender=s;store=new AtomicFile(file);identity=key;nodeId=UUID.nameUUIDFromBytes(identity.getPublic().getEncoded()).toString();load();if(schedule)retry.scheduleAtFixedRate(this::retryPending,1,1,TimeUnit.SECONDS);}
@@ -38,22 +60,25 @@ final class MeshRouter {
  synchronized void neighbor(String id,boolean connected){if(connected){if(neighbors.contains(id)||neighbors.size()<MAX_NEIGHBORS){neighbors.add(id);
   // A (re)connected neighbour gets everything it has not taken custody of now, not after the resend timer.
   sentAt.keySet().removeIf(key->key.endsWith("@"+id));drain(id);}}else neighbors.remove(id);events.event("meshNeighbor",obj("id",id,"connected",connected));}
- synchronized String send(String type,String destination,String body)throws Exception{expire();if(awaitingReceipt.size()>=MAX_QUEUE&&!destination.equals("*"))throw new IOException("Pending receipt queue full");MeshPacket p=MeshPacket.create(type,nodeId,destination,body,type.equals("sos")?3:1,identity);if(type.equals("sos")&&queue.size()>=MAX_QUEUE)evictVoice();if(queue.size()>=MAX_QUEUE)evictDelivered();if(queue.size()>=MAX_QUEUE)throw new IOException("Mesh queue full; send later");remember(p.id());queue.put(p.id(),p.wire());if(type.equals("text")&&!destination.equals("*"))awaitingReceipt.put(p.id(),p.wire());persist();events.event("meshStatus",obj("id",p.id(),"status","queued"));for(String n:neighbors)drain(n);return p.id();}
+ synchronized String send(String type,String destination,String body)throws Exception{expire();
+  // Receipt tracking is bounded: the oldest unconfirmed message stops being re-sent from here (relays still hold it).
+  if(type.equals("text")&&!destination.equals("*")&&awaitingReceipt.size()>=MAX_AWAITING)awaitingReceipt.remove(awaitingReceipt.keySet().iterator().next());
+  MeshPacket p=MeshPacket.create(type,nodeId,destination,body,type.equals("sos")?3:1,identity);
+  if(!makeRoom(type.equals("sos")?9:6))throw new IOException("Too many messages are still waiting for a nearby Talk2 phone. They go out automatically when one is in range; send again after some are delivered.");
+  remember(p.id());queue.put(p.id(),p.wire());if(type.equals("text")&&!destination.equals("*"))awaitingReceipt.put(p.id(),p.wire());persist();events.event("meshStatus",obj("id",p.id(),"status","queued"));for(String n:neighbors)drain(n);return p.id();}
  synchronized boolean sendExtension(String type,String destination,String body,int priority)throws Exception {
   long bulk=0;for(String wire:queue.values())try{MeshPacket p=MeshPacket.parse(wire);if(p.type().equals("voice")&&p.priority()==0)bulk++;}catch(Exception ignored){}
   if(priority==0&&(queue.size()>=MAX_QUEUE-4||bulk>=4))return false;
-  if(priority>=3&&queue.size()>=MAX_QUEUE)evictVoice();if(queue.size()>=MAX_QUEUE)evictDelivered();if(queue.size()>=MAX_QUEUE)return false;
-  // A newer own location supersedes older queued ones, so late joiners get only the latest.
-  if(type.equals("position"))for(Map.Entry<String,String> x:new ArrayList<>(queue.entrySet()))try{MeshPacket old=MeshPacket.parse(x.getValue());if(old.type().equals("position")&&old.sender().equals(nodeId)){queue.remove(x.getKey());forget(x.getKey());}}catch(Exception ignored){}
+  // A newer own location/presence supersedes older queued ones, so late joiners get only the latest.
+  MeshPacket p=MeshPacket.create(type,nodeId,destination,body,priority,identity);supersede(p);if(!makeRoom(value(p.id(),p)))return false;
   // Own packets count as seen so a relay echoing them back is not flooded again.
-  MeshPacket p=MeshPacket.create(type,nodeId,destination,body,priority,identity);remember(p.id());queue.put(p.id(),p.wire());persist();for(String n:neighbors)drain(n);return true;
+  remember(p.id());queue.put(p.id(),p.wire());persist();for(String n:neighbors)drain(n);return true;
  }
  synchronized boolean relayVoice(String wire,String from)throws Exception {
   MeshPacket p=MeshPacket.parse(wire);if(queue.containsKey(p.id()))return true;if(queue.size()>=MAX_QUEUE-4)return false;
   long bulk=0;for(String w:queue.values())try{if(MeshPacket.parse(w).type().equals("voice"))bulk++;}catch(Exception ignored){}if(bulk>=4)return false;
   queue.put(p.id(),wire);ingress.put(p.id(),from);persist();for(String n:neighbors)drain(n);return true;
  }
- private void evictVoice(){for(Map.Entry<String,String> x:new ArrayList<>(queue.entrySet()))try{MeshPacket p=MeshPacket.parse(x.getValue());if(p.type().equals("voice")&&p.priority()==0){queue.remove(x.getKey());forget(x.getKey());return;}}catch(Exception ignored){}}
  synchronized void receive(String neighbor,String wire)throws Exception {
   MeshPacket p=MeshPacket.parse(wire);boolean addressed=p.destination().equals(nodeId)||p.destination().equals("*");
   if(p.type().equals("custody")){
@@ -70,20 +95,22 @@ final class MeshRouter {
   boolean extended=p.type().equals("voice")||p.type().equals("position")||p.type().equals("presence");
   boolean spooledVoice=addressed&&p.type().equals("voice")&&Arrays.asList("meta","chunk").contains(new JSONObject(p.body()).optString("op"));
   boolean duplicate=seen.containsKey(p.id());boolean mustForward=!spooledVoice&&(!addressed||p.destination().equals("*"))&&p.json.getInt("hops")<p.json.getInt("ttl");
-  if(!duplicate&&mustForward&&queue.size()>=MAX_QUEUE){if(p.type().equals("sos"))evictVoice();if(queue.size()>=MAX_QUEUE)evictDelivered();if(queue.size()>=MAX_QUEUE)return;}
+  // A full relay still shows a broadcast addressed to everyone (an SOS above all); it just does not relay it.
+  if(!duplicate&&mustForward){supersede(p);if(!makeRoom(value(p.id(),p))){if(!addressed)return;mustForward=false;}}
   // Duplicate copies of position/presence are not re-delivered to the app; voice handles its own duplicates.
   if(addressed&&extended&&!(duplicate&&!p.type().equals("voice"))&&(extension==null||!extension.accept(p,neighbor)))return;
-  if(!duplicate){if(addressed&&!extended&&inbox.size()>=MAX_QUEUE)return;
+  // The inbox only covers app restarts; when full, the oldest entry (already shown) makes way.
+  if(!duplicate){if(addressed&&!extended&&inbox.size()>=MAX_INBOX)inbox.remove(inbox.keySet().iterator().next());
    if(addressed&&!extended)inbox.put(p.id(),p.wire());if(mustForward){MeshPacket f=p.forwarded(nodeId);queue.put(f.id(),f.wire());ingress.put(f.id(),neighbor);}remember(p.id());persist();}
-  boolean reinboxed=false;if(duplicate&&addressed&&!extended&&!inbox.containsKey(p.id())){if(inbox.size()>=MAX_QUEUE)return;inbox.put(p.id(),p.wire());persist();reinboxed=true;}
+  boolean reinboxed=false;if(duplicate&&addressed&&!extended&&!inbox.containsKey(p.id())){if(inbox.size()>=MAX_INBOX)inbox.remove(inbox.keySet().iterator().next());inbox.put(p.id(),p.wire());persist();reinboxed=true;}
   MeshPacket custody=MeshPacket.create("custody",nodeId,p.lastHop(),p.id(),3,identity);
   try{sender.send(neighbor,custody.wire());}catch(Exception unavailable){/* sender retries until custody/expiry */}
   if(addressed&&!extended&&(!duplicate||reinboxed))events.event(p.type().equals("sos")?"meshSOS":"meshMessage",new JSONObject(p.json.toString()).put("status","received at destination"));
   for(String n:neighbors)if(!n.equals(neighbor))drain(n);
  }
  private void remember(String id){if(seen.size()>=MAX_SEEN)seen.remove(seen.keySet().iterator().next());seen.put(id,System.currentTimeMillis());}
- private void forward(MeshPacket p,String neighbor)throws Exception{if(p.json.optInt("hops")>=p.json.optInt("ttl"))return;MeshPacket f=p.forwarded(nodeId);if(queue.size()>=MAX_QUEUE)evictDelivered();if(queue.size()<MAX_QUEUE){queue.put(f.id(),f.wire());ingress.put(f.id(),neighbor);}persist();for(String n:neighbors)if(!n.equals(neighbor))drain(n);}
- synchronized void acknowledgeInbox(String id)throws Exception{String wire=inbox.remove(id);if(wire==null)return;MeshPacket p=MeshPacket.parse(wire);persist();if(p.type().equals("text")&&!p.destination().equals("*")){MeshPacket ack=MeshPacket.create("ack",nodeId,p.sender(),p.id(),3,identity);if(queue.size()<MAX_QUEUE){queue.put(ack.id(),ack.wire());persist();for(String n:neighbors)drain(n);}}}
+ private void forward(MeshPacket p,String neighbor)throws Exception{if(p.json.optInt("hops")>=p.json.optInt("ttl"))return;MeshPacket f=p.forwarded(nodeId);if(makeRoom(value(f.id(),f))){queue.put(f.id(),f.wire());ingress.put(f.id(),neighbor);}persist();for(String n:neighbors)if(!n.equals(neighbor))drain(n);}
+ synchronized void acknowledgeInbox(String id)throws Exception{String wire=inbox.remove(id);if(wire==null)return;MeshPacket p=MeshPacket.parse(wire);persist();if(p.type().equals("text")&&!p.destination().equals("*")){MeshPacket ack=MeshPacket.create("ack",nodeId,p.sender(),p.id(),3,identity);if(makeRoom(6)){queue.put(ack.id(),ack.wire());persist();for(String n:neighbors)drain(n);}}}
  synchronized void replayInbox(){for(String wire:new ArrayList<>(inbox.values()))try{MeshPacket p=MeshPacket.parse(wire);events.event(p.type().equals("sos")?"meshSOS":"meshMessage",new JSONObject(p.json.toString()).put("status","received at destination"));}catch(Exception ignored){}}
  private void forget(String id){ingress.remove(id);delivered.removeIf(key->key.startsWith(id+"@"));sentAt.keySet().removeIf(key->key.startsWith(id+"@")||key.startsWith("origin:"+id+"@"));}
  private synchronized void retryPending(){try{expire();for(String n:new ArrayList<>(neighbors))drain(n);if(extension!=null)extension.tick();}catch(Exception e){events.event("meshError",obj("message",e.getMessage(),"operation","retry"));}}
@@ -94,13 +121,13 @@ final class MeshRouter {
  synchronized void close(){retry.shutdownNow();neighbors.clear();}
  static void eraseVoice(File file)throws Exception{
   if(!file.exists()&&!new File(file.getPath()+".bak").exists())return;AtomicFile atomic=new AtomicFile(file);JSONObject root;
-  try(InputStream in=atomic.openRead();ByteArrayOutputStream out=new ByteArrayOutputStream()){byte[] b=new byte[8192];int n;while((n=in.read(b))>0){if(out.size()+n>512*1024)throw new IOException("Mesh store exceeds bound");out.write(b,0,n);}root=new JSONObject(out.toString("UTF-8"));}
+  try(InputStream in=atomic.openRead();ByteArrayOutputStream out=new ByteArrayOutputStream()){byte[] b=new byte[8192];int n;while((n=in.read(b))>0){if(out.size()+n>STORE_BOUND)throw new IOException("Mesh store exceeds bound");out.write(b,0,n);}root=new JSONObject(out.toString("UTF-8"));}
   for(String key:new String[]{"queue","awaiting","inbox"}){JSONArray old=root.optJSONArray(key),keep=new JSONArray();if(old!=null)for(int i=0;i<old.length();i++)try{MeshPacket packet=MeshPacket.parse(old.getString(i));if(!packet.type().equals("voice"))keep.put(old.getString(i));}catch(Exception invalid){}root.put(key,keep);}
   JSONObject oldLinks=root.optJSONObject("ingress"),keptLinks=new JSONObject();JSONArray pending=root.getJSONArray("queue");if(oldLinks!=null)for(int i=0;i<pending.length();i++){String id=MeshPacket.parse(pending.getString(i)).id();if(oldLinks.has(id))keptLinks.put(id,oldLinks.get(id));}root.put("ingress",keptLinks);FileOutputStream out=null;try{out=atomic.startWrite();out.write(root.toString().getBytes("UTF-8"));atomic.finishWrite(out);}catch(Exception e){if(out!=null)atomic.failWrite(out);throw e;}
  }
- private void load()throws Exception{if(!store.getBaseFile().exists())return;try(FileInputStream in=store.openRead();ByteArrayOutputStream bytes=new ByteArrayOutputStream()){byte[] b=new byte[8192];int n,total=0;while((n=in.read(b))>0){total+=n;if(total>512*1024)throw new IOException("Mesh store exceeds bound");bytes.write(b,0,n);}JSONObject o=new JSONObject(new String(bytes.toByteArray(),"UTF-8"));loadArray(o.optJSONArray("queue"),queue);loadArray(o.optJSONArray("awaiting"),awaitingReceipt);loadArray(o.optJSONArray("inbox"),inbox);JSONObject links=o.optJSONObject("ingress");if(links!=null)for(String id:queue.keySet())if(links.has(id))ingress.put(id,links.getString(id));JSONArray ids=o.optJSONArray("seen");if(ids!=null)for(int i=Math.max(0,ids.length()-MAX_SEEN);i<ids.length();i++)seen.put(ids.getString(i),System.currentTimeMillis());}}
+ private void load()throws Exception{if(!store.getBaseFile().exists())return;try(FileInputStream in=store.openRead();ByteArrayOutputStream bytes=new ByteArrayOutputStream()){byte[] b=new byte[8192];int n,total=0;while((n=in.read(b))>0){total+=n;if(total>STORE_BOUND)throw new IOException("Mesh store exceeds bound");bytes.write(b,0,n);}JSONObject o=new JSONObject(new String(bytes.toByteArray(),"UTF-8"));loadArray(o.optJSONArray("queue"),queue);loadArray(o.optJSONArray("awaiting"),awaitingReceipt);loadArray(o.optJSONArray("inbox"),inbox);JSONObject links=o.optJSONObject("ingress");if(links!=null)for(String id:queue.keySet())if(links.has(id))ingress.put(id,links.getString(id));JSONArray ids=o.optJSONArray("seen");if(ids!=null)for(int i=Math.max(0,ids.length()-MAX_SEEN);i<ids.length();i++)seen.put(ids.getString(i),System.currentTimeMillis());}}
  private void loadArray(JSONArray a,LinkedHashMap<String,String> into)throws Exception{if(a==null)return;for(int i=0;i<a.length()&&into.size()<MAX_QUEUE;i++){String wire=a.getString(i);try{MeshPacket p=MeshPacket.parse(wire);into.put(p.id(),wire);}catch(Exception expiredOrInvalid){/* stale/corrupt bounded queue entries are discarded */}}}
- private synchronized void persist()throws IOException{FileOutputStream out=null;try{out=store.startWrite();JSONArray q=new JSONArray(),a=new JSONArray(),i=new JSONArray(),s=new JSONArray();for(String v:queue.values())q.put(v);for(String v:awaitingReceipt.values())a.put(v);for(String v:inbox.values())i.put(v);for(String id:seen.keySet())s.put(id);byte[] b=new JSONObject().put("queue",q).put("awaiting",a).put("inbox",i).put("seen",s).put("ingress",new JSONObject(ingress)).toString().getBytes("UTF-8");if(b.length>512*1024)throw new IOException("Mesh store bound exceeded");out.write(b);store.finishWrite(out);}catch(Exception e){if(out!=null)store.failWrite(out);if(e instanceof IOException)throw(IOException)e;throw new IOException(e);}}
+ private synchronized void persist()throws IOException{FileOutputStream out=null;try{out=store.startWrite();JSONArray q=new JSONArray(),a=new JSONArray(),i=new JSONArray(),s=new JSONArray();for(String v:queue.values())q.put(v);for(String v:awaitingReceipt.values())a.put(v);for(String v:inbox.values())i.put(v);for(String id:seen.keySet())s.put(id);byte[] b=new JSONObject().put("queue",q).put("awaiting",a).put("inbox",i).put("seen",s).put("ingress",new JSONObject(ingress)).toString().getBytes("UTF-8");if(b.length>STORE_BOUND)throw new IOException("Mesh store bound exceeded");out.write(b);store.finishWrite(out);}catch(Exception e){if(out!=null)store.failWrite(out);if(e instanceof IOException)throw(IOException)e;throw new IOException(e);}}
  private static JSONObject obj(String k,Object v,String k2,Object v2){try{return new JSONObject().put(k,v).put(k2,v2);}catch(Exception e){return new JSONObject();}}
  private static JSONObject obj(String k,Object v,String k2,Object v2,String k3,Object v3){try{return new JSONObject().put(k,v).put(k2,v2).put(k3,v3);}catch(Exception e){return new JSONObject();}}
 }

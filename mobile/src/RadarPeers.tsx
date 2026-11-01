@@ -1,10 +1,11 @@
 import React from "react";
 import { Pressable, Text, View } from "react-native";
 import { Icon } from "./Icon";
+import { P } from "./theme";
 const i18n = require("../../shared/i18n.cjs");
 
 const SIZE = 260, CENTER = SIZE / 2, RADIUS = CENTER - 18;
-const COLORS = { paired: "#2D8DD0", direct: "#2BAA72", relayed: "#D47743" };
+const COLORS = { paired: P.greenDark, direct: P.green, relayed: P.sand };
 const roles: Record<string, string> = { citizen: "Citizen", volunteer: "Volunteer", medical_support: "Medical / support", emergency_staff: "Emergency staff" };
 const CARDINALS = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"];
 const kind = (p: any): keyof typeof COLORS => (p.transport === "Paired direct" ? "paired" : p.route === "relayed" ? "relayed" : "direct");
@@ -26,9 +27,10 @@ export function RadarPeers({ colors, peers, filter, onFilter, heading, compass, 
   const t = (s: string) => i18n.translate(s, ui);
   const max = range(peers);
   const dots = peers.filter((p) => p.polar);
+  const unplaced = peers.filter((p) => !p.polar);
   return (
     <View style={{ gap: 12 }}>
-      <View accessible accessibilityLabel={`${t("Radar")}: ${dots.length} ${t("people with a fresh location")}`} style={{ width: SIZE, height: SIZE, alignSelf: "center" }}>
+      <View accessible accessibilityLabel={`${t("Radar")}: ${dots.length} ${t("people with a fresh location")}, ${unplaced.length} ${t("without a shared location")}`} style={{ width: SIZE, height: SIZE, alignSelf: "center" }}>
         {[1, 2 / 3, 1 / 3].map((f) => (
           <View key={f} style={{ position: "absolute", left: CENTER - RADIUS * f, top: CENTER - RADIUS * f, width: RADIUS * 2 * f, height: RADIUS * 2 * f, borderRadius: RADIUS * f, borderWidth: 1, borderColor: colors.line, backgroundColor: f === 1 ? colors.card : undefined }} />
         ))}
@@ -37,21 +39,30 @@ export function RadarPeers({ colors, peers, filter, onFilter, heading, compass, 
         ))}
         {["N", "E", "S", "W"].map((name, i) => {
           const angle = ((i * 90 - heading) * Math.PI) / 180;
-          return <Text key={name} style={{ position: "absolute", left: CENTER - 5 + Math.sin(angle) * (RADIUS + 10), top: CENTER - 9 - Math.cos(angle) * (RADIUS + 10), fontWeight: "800", fontSize: 12, color: name === "N" ? "#D35D5D" : colors.muted }}>{name}</Text>;
+          return <Text key={name} style={{ position: "absolute", left: CENTER - 5 + Math.sin(angle) * (RADIUS + 10), top: CENTER - 9 - Math.cos(angle) * (RADIUS + 10), fontWeight: "800", fontSize: 12, color: name === "N" ? P.red : colors.muted }}>{name}</Text>;
         })}
         <View style={{ position: "absolute", left: CENTER - 8, top: CENTER - 8, width: 16, height: 16, borderRadius: 8, backgroundColor: colors.ink, borderWidth: 3, borderColor: colors.card }} />
         {dots.map((p) => {
           const a = (p.polar.relative * Math.PI) / 180, r = Math.min(1, p.polar.distance / max) * RADIUS;
-          return <View key={p.transport + p.id} style={{ position: "absolute", left: CENTER + Math.sin(a) * r - 7, top: CENTER - Math.cos(a) * r - 7, width: 14, height: 14, borderRadius: 7, backgroundColor: COLORS[kind(p)], borderWidth: 2, borderColor: "#FFF" }} />;
+          return <View key={p.transport + p.id} style={{ position: "absolute", left: CENTER + Math.sin(a) * r - 7, top: CENTER - Math.cos(a) * r - 7, width: 14, height: 14, borderRadius: 7, backgroundColor: COLORS[kind(p)], borderWidth: 2, borderColor: P.cream }} />;
+        })}
+        {/* Everyone else is still shown, as hollow dots on the outer ring: present, but no shared location. */}
+        {unplaced.map((p, i) => {
+          const a = ((i + 0.5) * 2 * Math.PI) / unplaced.length + 0.35;
+          return <View key={"u" + p.transport + p.id} style={{ position: "absolute", left: CENTER + Math.sin(a) * RADIUS - 6, top: CENTER - Math.cos(a) * RADIUS - 6, width: 12, height: 12, borderRadius: 6, borderWidth: 2.5, borderColor: COLORS[kind(p)], backgroundColor: colors.card }} />;
         })}
       </View>
-      <View style={{ flexDirection: "row", justifyContent: "center", gap: 14 }}>
+      <View style={{ flexDirection: "row", justifyContent: "center", flexWrap: "wrap", gap: 12 }}>
         {(["paired", "direct", "relayed"] as const).map((k) => (
           <View key={k} style={{ flexDirection: "row", alignItems: "center", gap: 5 }}>
             <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: COLORS[k] }} />
             <Text style={{ fontSize: 12, color: colors.muted }}>{t(k === "paired" ? "Paired" : k === "direct" ? "Direct" : "Relayed")}</Text>
           </View>
         ))}
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 5 }}>
+          <View style={{ width: 10, height: 10, borderRadius: 5, borderWidth: 2, borderColor: colors.muted }} />
+          <Text style={{ fontSize: 12, color: colors.muted }}>{t("No location (outer ring)")}</Text>
+        </View>
       </View>
       {!compass && (
         <View style={{ flexDirection: "row", justifyContent: "center", alignItems: "center", gap: 4 }}>
@@ -62,8 +73,8 @@ export function RadarPeers({ colors, peers, filter, onFilter, heading, compass, 
       <View style={{ flexDirection: "row", gap: 8, justifyContent: "center" }}>
         {(["all", "direct", "relayed"] as const).map((mode) => (
           <Pressable key={mode} accessibilityRole="button" accessibilityState={{ selected: filter === mode }} onPress={() => onFilter(mode)}
-            style={{ paddingHorizontal: 14, paddingVertical: 7, borderRadius: 14, borderWidth: 1, borderColor: filter === mode ? "#1769AA" : colors.line, backgroundColor: filter === mode ? "#1769AA" : undefined }}>
-            <Text style={{ color: filter === mode ? "#FFF" : colors.ink, fontWeight: "700", fontSize: 13 }}>{t(mode === "all" ? "All" : mode === "direct" ? "Direct" : "Relayed")}</Text>
+            style={{ paddingHorizontal: 14, paddingVertical: 7, borderRadius: 14, borderWidth: 1, borderColor: filter === mode ? P.green : colors.line, backgroundColor: filter === mode ? P.green : undefined }}>
+            <Text style={{ color: filter === mode ? P.cream : colors.ink, fontWeight: "700", fontSize: 13 }}>{t(mode === "all" ? "All" : mode === "direct" ? "Direct" : "Relayed")}</Text>
           </Pressable>
         ))}
       </View>

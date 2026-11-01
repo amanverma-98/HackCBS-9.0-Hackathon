@@ -40,7 +40,7 @@ export function MeshVoicePanel({ color, active, source, ui, installed, available
     <Text style={{color}}>{t("Audio and transcripts are public. Every receiving phone and relay can read them. Use paired direct mode for private voice.")}</Text>
     <Button title={t(recording ? "Finish public recording" : "Record public note")} disabled={busy || !active} onPress={recording ? stop : record} />
     {!!draft && <>
-      <Button title={t("Play original draft")} onPress={() => Native.playVoice(draft).catch((e: any) => setError(e.message))} />
+      <Button title={t("Play original draft")} onPress={() => Native.playVoice(draft, 0).catch((e: any) => setError(e.message))} />
       <Button title={t("Add source transcript (optional)")} disabled={busy} onPress={async () => {
         setBusy(true); setError(""); try { const reason = require("../../shared/language-state.cjs").recognitionReason(language, installed, available); if (reason) throw new Error(t(reason)); const text = await Native.transcribeVoice(draft, language);
           if (text.length > 256) throw new Error(t("Transcript exceeds 256 characters. Original audio is still available."));

@@ -19,7 +19,7 @@ export function TranslatedVoice({ color, transcript, source, target, tts, instal
     }} />
     {!!translated && <Text style={{color}} selectable>{translated}</Text>}
     <Button title={t("Play translated speech")} disabled={busy || !translated || !!state.speechReason} onPress={async () => {
-      setBusy(true); setError(""); try { await Native.speak(translated, tts); }
+      setBusy(true); setError(""); try { await Native.speak(translated, tts, 0); }
       catch (e: any) { setError(e.message); } finally { setBusy(false); }
     }} />
     {!!state.speechReason && <Text style={{color}}>{t(state.speechReason)}</Text>}

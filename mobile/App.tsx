@@ -6,6 +6,7 @@ import {
   AppState,
   Easing,
   Image,
+  Keyboard,
   Linking,
   Modal,
   Platform,
@@ -20,14 +21,15 @@ import {
   Text as NativeText,
   TextInput,
   View,
-  useColorScheme,
 } from "react-native";
 import { RadarPeers } from "./src/RadarPeers";
 import { Icon } from "./src/Icon";
+import { P } from "./src/theme";
 import { TranslatedVoice } from "./src/TranslatedVoice";
 import { MeshVoicePanel } from "./src/MeshVoicePanel";
 import { Native, Mesh, events, permissions, permissionStatus, requestAllPermissions } from "./src/native";
 import { DEFAULT_BACKEND_URL, DEFAULT_MANIFEST_URL } from "./src/config";
+import { api } from "./src/api";
 import { LANGUAGES, position, prune, validMessage } from "../shared/core.cjs";
 import alertData from "../shared/alerts.json";
 import upstream from "../model-host/upstream-manifest.json";
@@ -38,6 +40,9 @@ const locationPolicy = require("../shared/location.cjs");
 const packUtils = require("../shared/model-packs.cjs");
 const meshLocation = require("../shared/mesh-location.cjs");
 const { createRefresher } = require("../shared/refresh.cjs");
+const translationPairs = require("../shared/translation-pairs.cjs");
+const accountLib = require("../shared/account.cjs");
+const sosLib = require("../shared/sos.cjs");
 let activeUi = "en";
 function localized(value: any): any {
   if (typeof value === "string") return i18n.translate(value, activeUi);
@@ -82,7 +87,13 @@ type Message = {
   from?: string;
   // Sealed end to end (direct link or sealed mesh); false for public mesh broadcasts.
   private?: boolean;
+  // Relays the delivery receipt crossed (0 = direct mesh link).
+  deliveredHops?: number;
+  // Parsed SOS payload (shared/sos.cjs): sender, location, battery.
+  sos?: any;
 };
+/** Every alert is an SOS: it sounds the siren, shows in red and opens a detail sheet. */
+const isSOS = (m: Message) => m.kind === "alert" || !!m.sos;
 type Settings = {
   settingsVersion: number;
   setup: boolean;
@@ -97,6 +108,8 @@ type Settings = {
   theme: string;
   manifestUrl: string;
   backend: string;
+  /** Optional online account (backend/); null when signed out. */
+  account: { token: string; user: any } | null;
   shareLocation: boolean;
   sirenEnabled: boolean;
   photo: string;
@@ -133,6 +146,7 @@ const initial: Settings = {
   theme: "system",
   manifestUrl: DEFAULT_MANIFEST_URL,
   backend: DEFAULT_BACKEND_URL,
+  account: null,
   shareLocation: false,
   sirenEnabled: false,
   photo: "",
@@ -165,7 +179,7 @@ function Button({
       style={[
         s.button,
         {
-          backgroundColor: secondary ? c.bg : "#1769AA",
+          backgroundColor: secondary ? c.bg : P.green,
           borderColor: c.line,
           borderWidth: secondary ? 1 : 0,
           opacity: disabled ? 0.45 : 1,
@@ -173,10 +187,10 @@ function Button({
       ]}
     >
       <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8 }}>
-        {!!icon && <Icon name={icon} size={18} color={secondary ? c.ink : "#FFF"} />}
+        {!!icon && <Icon name={icon} size={18} color={secondary ? c.ink : P.cream} />}
         <Text
           style={{
-            color: secondary ? c.ink : "#FFF",
+            color: secondary ? c.ink : P.cream,
             fontWeight: "700",
             textAlign: "center",
           }}
@@ -212,6 +226,29 @@ function Field({
     />
   );
 }
+/** Three bars that bounce while a message is playing. */
+function PlayingBars({ color }: { color: string }) {
+  const bars = useRef([0, 1, 2].map(() => new Animated.Value(0.35))).current;
+  useEffect(() => {
+    const loops = bars.map((v, i) =>
+      Animated.loop(
+        Animated.sequence([
+          Animated.timing(v, { toValue: 1, duration: 280 + i * 90, useNativeDriver: true }),
+          Animated.timing(v, { toValue: 0.35, duration: 280 + i * 90, useNativeDriver: true }),
+        ]),
+      ),
+    );
+    loops.forEach((l) => l.start());
+    return () => loops.forEach((l) => l.stop());
+  }, [bars]);
+  return (
+    <View accessible accessibilityLabel={localized("Playing")} style={{ flexDirection: "row", alignItems: "flex-end", gap: 3, height: 18 }}>
+      {bars.map((v, i) => (
+        <Animated.View key={i} style={{ width: 4, height: 18, borderRadius: 2, backgroundColor: color, transform: [{ scaleY: v }] }} />
+      ))}
+    </View>
+  );
+}
 function notifyMessage(setError: (message: string) => void) {
   try {
     if (Native && typeof Native.vibrateForMessage === "function") {
@@ -227,7 +264,14 @@ export default function App() {
     [loaded, setLoaded] = useState(false),
     [step, setStep] = useState(0),
     [tab, setTab] = useState("talk"),
-    [route, setRoute] = useState("");
+    [route, setRoute] = useState(""),
+    [keyboardOpen, setKeyboardOpen] = useState(false);
+  // While typing, the tab bar steps aside so the composer sits right on the keyboard.
+  useEffect(() => {
+    const show = Keyboard.addListener("keyboardDidShow", () => setKeyboardOpen(true));
+    const hide = Keyboard.addListener("keyboardDidHide", () => setKeyboardOpen(false));
+    return () => { show.remove(); hide.remove(); };
+  }, []);
   const [error, setError] = useState(""),
     [busy, setBusy] = useState(""),
     [text, setText] = useState(""),
@@ -276,6 +320,16 @@ export default function App() {
     [pairConfirmed, setPairConfirmed] = useState(false),
     [showAdvanced, setShowAdvanced] = useState(false),
     [showMeshVoice, setShowMeshVoice] = useState(false),
+    // Message playback: which clip is playing or paused, and where each paused clip stopped.
+    [playing, setPlaying] = useState<{ key: string; paused: boolean } | null>(null),
+    playbackKey = useRef(""),
+    playbackPositions = useRef<Record<string, number>>({}),
+    [showPairing, setShowPairing] = useState(false),
+    [sosOpen, setSosOpen] = useState<Message | null>(null),
+    // What the current hold-to-talk recording is for: a chat message or a voice SOS.
+    pttPurpose = useRef<"talk" | "sos">("talk"),
+    lastAnnounce = useRef(0),
+    chatScroll = useRef<any>(null),
     [permState, setPermState] = useState<Record<string, string>>({}),
     [radios, setRadios] = useState<Record<string, boolean>>({}),
     [permsAsked, setPermsAsked] = useState(false);
@@ -298,8 +352,9 @@ export default function App() {
     [clock, setClock] = useState(Date.now()),
     [metrics, setMetrics] = useState<any>({}),
     [filter, setFilter] = useState("all"),
-    [token, setToken] = useState(""),
-    [answer, setAnswer] = useState("");
+    // Account screen form (Settings -> Account); the signed-in session itself lives in data.account.
+    [acct, setAcct] = useState({ mode: "login", name: "", email: "", password: "", phone: "", city: "", skills: "", languages: "", availability: "anytime", searchCity: "", searchSkill: "" }),
+    [volunteers, setVolunteers] = useState<any[] | null>(null);
   const [sirenEnabled, setSirenEnabled] = useState(false);
   // People announced over the mesh, keyed by mesh node id; includes phones several hops away.
   const [meshDir, setMeshDir] = useState<Record<string, any>>({}),
@@ -345,24 +400,8 @@ export default function App() {
   const audioBusy = useRef(0);
   const saveChain = useRef(Promise.resolve()),
     receiveChain = useRef(Promise.resolve());
-  const system = useColorScheme(),
-    dark =
-      data.theme === "dark" || (data.theme === "system" && system === "dark");
-  const c: Colors = dark
-    ? {
-        bg: "#071426",
-        card: "#10243D",
-        ink: "#F1F7FF",
-        muted: "#AFC2D8",
-        line: "#2A4566",
-      }
-    : {
-        bg: "#F2F7FC",
-        card: "#FFFFFF",
-        ink: "#102A43",
-        muted: "#607A96",
-        line: "#D5E3F1",
-      };
+  // One theme: cream background, green text and actions (mobile/src/theme.ts). No dark mode.
+  const c: Colors = { bg: P.cream, card: P.card, ink: P.green, muted: P.muted, line: P.line };
   activeUi = data.ui || "en";
   i18n.setLocale(activeUi);
   const tabs = tabKeys.map((key) => i18n.translate(key, activeUi));
@@ -381,6 +420,68 @@ export default function App() {
   const change = (patch: Partial<Settings>) => {
     persist(update(patch)).catch((e: any) => setError(e.message));
   };
+  /** Fills the volunteer form from the account's saved onboarding. */
+  const fillVolunteerForm = (user: any) => {
+    const o = user?.onboarding || {};
+    if (o.completed)
+      setAcct((a) => ({ ...a, phone: o.phone || "", city: o.city || "", skills: (o.skills || []).join(", "), languages: (o.languages || []).join(", "), availability: o.availability || "anytime" }));
+  };
+  /** Log in, or create an account with the role chosen at onboarding. */
+  async function authSubmit() {
+    const email = acct.email.trim(), password = acct.password;
+    const signup = acct.mode === "signup";
+    if (signup && password.length < 8) throw new Error("Password must be at least 8 characters");
+    const r = await api(DEFAULT_BACKEND_URL, signup ? "auth/signup" : "auth/login", {
+      method: "POST",
+      body: signup ? { name: acct.name.trim() || ref.current.name, email, password, role: ref.current.role } : { email, password },
+    });
+    change({ account: { token: r.token, user: r.user } });
+    setAcct((a) => ({ ...a, password: "" }));
+    fillVolunteerForm(r.user);
+  }
+  async function refreshAccount() {
+    const session = ref.current.account;
+    if (!session) return;
+    try {
+      const r = await api(DEFAULT_BACKEND_URL, "auth/me", { token: session.token });
+      change({ account: { ...session, user: r.user } });
+      fillVolunteerForm(r.user);
+    } catch (e: any) {
+      if (e.status === 401) change({ account: null });
+      throw e;
+    }
+  }
+  async function logout() {
+    const session = ref.current.account;
+    try {
+      if (session) await api(DEFAULT_BACKEND_URL, "auth/logout", { method: "POST", token: session.token, timeoutMs: 20000 });
+    } catch {
+      // Offline or already revoked: this phone forgets the session either way.
+    } finally {
+      change({ account: null });
+      setVolunteers(null);
+    }
+  }
+  async function saveVolunteerDetails() {
+    const session = ref.current.account;
+    if (!session) throw new Error("Log in first");
+    const r = await api(DEFAULT_BACKEND_URL, "volunteers/onboarding", {
+      method: "POST",
+      token: session.token,
+      body: { phone: acct.phone.trim(), city: acct.city.trim(), skills: accountLib.parseList(acct.skills), languages: accountLib.parseList(acct.languages), availability: acct.availability },
+    });
+    change({ account: { ...session, user: r.user } });
+    feedback("message");
+  }
+  async function findVolunteers() {
+    const session = ref.current.account;
+    if (!session) throw new Error("Log in first");
+    const q = new URLSearchParams();
+    if (acct.searchCity.trim()) q.set("city", acct.searchCity.trim());
+    if (acct.searchSkill.trim()) q.set("skill", acct.searchSkill.trim());
+    const r = await api(DEFAULT_BACKEND_URL, `volunteers?${q.toString()}`, { token: session.token });
+    setVolunteers(r.volunteers || []);
+  }
   const feedback = (kind = "tap") => {
     if (ref.current.haptics)
       Native.feedback(kind).catch((e: any) => setError(e.message));
@@ -436,38 +537,64 @@ export default function App() {
       ? templates[key][language]
       : undefined;
   /** Speaks a message in this phone's language; original=true plays the recorded voice instead. */
+  /** Text and voice language used to speak a message on this phone, or null if no voice fits. */
+  function spokenFor(m: Message): { text: string; lang: string; translate?: boolean } | null {
+    const target = ref.current.targetTranslation;
+    if (m.template) {
+      const t = phrase(m.template, target);
+      if (t) return { text: t, lang: target };
+    }
+    const source = m.kind === "voice" ? m.transcript || "" : m.text;
+    if (!source) return null;
+    if (m.translated && m.translatedLang === target) return { text: m.translated, lang: target };
+    const plan = translationPairs.translationPlan(m.language, target);
+    if (plan === "same") return { text: source, lang: target };
+    if (plan === "translate" && packsRef.current[translationPairs.packFor(m.language, target)])
+      return { text: source, lang: target, translate: true };
+    // No offline translation (or its pack is not downloaded): speak the original words if a voice for that language exists.
+    return packsRef.current[m.language] || packDetails[m.language]?.builtInVoice ? { text: source, lang: m.language } : null;
+  }
+  /**
+   * Plays a message (original=true: the recorded voice). Pausing records the position, so
+   * playing the same clip again resumes there; starting another clip pauses the current one.
+   */
   async function play(m: Message, original = false) {
     if (ptt.current?.active)
       throw new Error("Finish recording before playing a message");
+    const spoken = original ? null : spokenFor(m);
+    const useAudio = !!m.audioUri && (original || !spoken);
+    if (!useAudio && !spoken) throw new Error("No voice is available for this language on this phone.");
+    const key = `${m.id}:${useAudio ? "o" : "s"}`;
+    if (playbackKey.current) Native.pausePlayback();
+    playbackKey.current = key;
+    setPlaying({ key, paused: false });
     audioBusy.current++;
-    setBusy("Playing speech on this phone…");
     try {
-      const target = ref.current.targetTranslation;
-      if (m.kind === "voice" && m.audioUri && (original || !(m.translated || m.transcript))) {
-        await Native.playVoice(m.audioUri);
-        return;
+      const startAt = playbackPositions.current[key] || 0;
+      let result: any;
+      if (useAudio) result = JSON.parse(await Native.playVoice(m.audioUri, startAt));
+      else {
+        const text = spoken!.translate ? await Native.translate(spoken!.text, m.language, spoken!.lang) : spoken!.text;
+        result = JSON.parse(await Native.speak(text, spoken!.lang, startAt));
       }
-      const source = m.kind === "voice" ? m.transcript || "" : m.text;
-      let spoken = m.template ? phrase(m.template, target) : undefined;
-      if (!spoken)
-        spoken =
-          m.translated && m.translatedLang === target
-            ? m.translated
-            : m.language === target
-              ? source
-              : await Native.translate(source, m.language, target);
-      await Native.speak(spoken, target);
+      if (result.done) delete playbackPositions.current[key];
+      else playbackPositions.current[key] = result.position;
+      if (playbackKey.current === key) setPlaying(result.done ? null : { key, paused: true });
+    } catch (e) {
+      if (playbackKey.current === key) setPlaying(null);
+      throw e;
     } finally {
+      if (playbackKey.current === key) playbackKey.current = "";
       audioBusy.current--;
-      if (!audioBusy.current) setBusy("");
     }
   }
+  const pausePlayback = () => Native.pausePlayback();
 
   /** Translates an incoming message into this phone's language and stores the result. */
   async function translateIncoming(m: Message): Promise<Message> {
     const target = ref.current.targetTranslation;
     const source = m.kind === "voice" ? m.transcript || "" : m.text;
-    if (!source || m.template || !m.language || m.language === "und" || m.language === target) return m;
+    if (!source || m.template || translationPairs.translationPlan(m.language, target) !== "translate") return m;
     try {
       const translated = await Native.translate(source, m.language, target);
       const next = { ...m, translated, translatedLang: target };
@@ -479,14 +606,11 @@ export default function App() {
   }
   async function deliver(incoming: Message) {
     await add(incoming);
-    feedback("message");
-    if (incoming.kind === "alert")
-      Alert.alert(
-        "Incoming alert",
-        incoming.template
-          ? phrase(incoming.template, ref.current.targetTranslation) || incoming.text
-          : incoming.text,
-      );
+    if (isSOS(incoming)) {
+      // SOS always sounds the siren on the alarm stream, whatever the sound setting.
+      Native.sosSiren();
+      setSosOpen(incoming);
+    } else Native.messageCue(ref.current.sounds, ref.current.haptics);
     const ready = await translateIncoming(incoming);
     // Auto-play is best effort; the message's Play button reports why speech failed.
     if (!incoming.queued && ref.current.autoPlay && !ptt.current?.active)
@@ -532,6 +656,7 @@ export default function App() {
         direction: "in",
         status: "received",
         name: peerLabel.current,
+        sos: m.sos ? sosLib.parseSOS(m.sos) || undefined : undefined,
       };
       await wire({ id: uid(), kind: "ack", ack: m.id, time: Date.now() }).catch(() => {});
       await deliver(incoming);
@@ -539,7 +664,10 @@ export default function App() {
   }
   async function receiveMesh(e: any) {
     if (!e?.id || !e?.body) return;
-    if (!ref.current.messages.some((m) => m.id === e.id && m.direction === "in")) {
+    // An SOS carries its own id, so the copy arriving over the direct link and the mesh is shown once.
+    const sos = e.type === "meshSOS" ? sosLib.parseSOS(e.body) : null;
+    const messageId = sos?.id || e.id;
+    if (!ref.current.messages.some((m) => m.id === messageId && m.direction === "in")) {
       // Chat over the mesh carries its language so the receiver can translate it.
       let chat: any = null;
       try {
@@ -556,22 +684,24 @@ export default function App() {
         return;
       }
       const incoming: Message = {
-        id: e.id,
+        id: messageId,
         kind: e.type === "meshSOS" || chat?.alert ? "alert" : "text",
-        text: (chat ? chat.text : e.body).slice(0, 1000),
-        language: chat && langs.some((l) => l.code === chat.lang) ? chat.lang : "und",
+        text: (sos ? sos.text || "SOS" : chat ? chat.text : e.body).slice(0, 1000),
+        language: sos && langs.some((l) => l.code === sos.lang) ? sos.lang : chat && langs.some((l) => l.code === chat.lang) ? chat.lang : "und",
         time: Number(e.created) || Date.now(),
         direction: "in",
         status: "received",
-        name: String(chat?.name || meshDirRef.current[sender]?.name || "BLE mesh").slice(0, 40),
+        name: String(sos?.name || chat?.name || meshDirRef.current[sender]?.name || "BLE mesh").slice(0, 40),
         mesh: true,
         from: sender,
         private: !broadcast,
+        sos: sos || undefined,
+        deliveredHops: Number.isFinite(Number(e.hops)) ? Number(e.hops) : undefined,
       };
-      if (e.type === "meshSOS") {
-        await add(incoming);
-        Alert.alert("Mesh SOS", incoming.text);
-      } else await deliver(incoming);
+      // Replies go back to the sender automatically when nothing else is selected.
+      if (!broadcast && !chatPeerRef.current && !paired.current && sender)
+        setChatPeer(meshDirRef.current[sender] || { id: sender, name: incoming.name, hops: 0 });
+      await deliver(incoming);
     }
     await Mesh.acknowledgeInbox(e.id);
   }
@@ -663,12 +793,19 @@ export default function App() {
         if (e.type === "meshVoicePiece") setMeshLinkSeen(old => old[e.neighbor] ? { ...old, [e.neighbor]: Date.now() } : old);
         if (e.type === "meshNeighbor") setMeshPeers((old) => e.connected ? (old.includes(e.id) ? old : [...old, e.id]) : old.filter((id) => id !== e.id));
         // A phone that just linked gets the current shared location without waiting for movement.
-        if (e.type === "meshNeighbor" && e.connected) publishLocation("neighbor");
+        if (e.type === "meshNeighbor" && e.connected) {
+          publishLocation("neighbor");
+          // A new link learns who is here within seconds instead of the next 20 s announcement.
+          if (Date.now() - lastAnnounce.current > 3000) {
+            lastAnnounce.current = Date.now();
+            announcePresence();
+          }
+        }
         if (e.type === "meshError") setMeshIssue(e.message || "BLE mesh error");
         if (e.type === "meshStopped") { meshEnabledRef.current = false; setMeshActive(false); setMeshPeers([]); setMeshLinkSeen({}); }
         if (e.type === "meshMessage" || e.type === "meshSOS") receiveMesh(e).catch((x: any) => setError(x.message));
         if (e.type === "meshReceipt" && typeof e.body === "string")
-          change({ messages: ref.current.messages.map((m) => (m.id === e.body && m.mesh && m.direction === "out" ? { ...m, status: "delivered" } : m)) });
+          change({ messages: ref.current.messages.map((m) => (m.id === e.body && m.mesh && m.direction === "out" ? { ...m, status: "delivered", deliveredHops: Math.max(0, Number(e.hops) || 0) } : m)) });
         if (e.type === "meshStatus" && ref.current.messages.some((m) => m.id === e.id && m.mesh && m.direction === "out" && m.kind !== "voice" && m.status !== "delivered")) {
           const next = e.status === "sent-to-neighbor" ? "sent" : e.status;
           change({ messages: ref.current.messages.map((m) => (m.id === e.id && m.mesh && m.direction === "out" && m.status !== "delivered" ? { ...m, status: next } : m)) });
@@ -787,7 +924,6 @@ export default function App() {
           )
             receive(e).catch((x: any) => setError(x.message));
           else {
-            if (e.kind === "alert" && ref.current.sounds) Native.alertTone();
             receiveChain.current = receiveChain.current
               .then(() => receive(e))
               .catch((x: any) => setError(x.message));
@@ -947,6 +1083,64 @@ export default function App() {
     feedback();
     setText("");
   }
+  /** Asks whether to attach this phone's location, then sends the SOS. */
+  function confirmSOS(opts: { text: string; template?: string; audioUri?: string }) {
+    Alert.alert("Send SOS?", opts.text, [
+      { text: "Cancel", style: "cancel" },
+      { text: "Send without location", onPress: () => run(() => sendSOS(opts, false)) },
+      { text: "Send with my location", onPress: () => run(() => sendSOS(opts, true), "Sending SOS…") },
+    ]);
+  }
+  /**
+   * Sends an SOS to everyone reachable: the paired phone (with the voice clip if any) and every
+   * phone on the mesh, including relays. SOS is public by design so anyone nearby can help.
+   */
+  async function sendSOS(opts: { text: string; template?: string; audioUri?: string }, withLocation: boolean) {
+    const now = Date.now();
+    if (withLocation && !locationPolicy.usableLocation(locationRef.current, now)) {
+      await permissions("location");
+      await Native.startSensors();
+      for (let i = 0; i < 16 && !locationPolicy.usableLocation(locationRef.current); i++)
+        await new Promise((r) => setTimeout(r, 500));
+    }
+    const fix = withLocation && locationPolicy.usableLocation(locationRef.current) ? locationRef.current : null;
+    const battery = await Native.batteryLevel().catch(() => -1);
+    const sos = sosLib.buildSOS({
+      id: uid(), text: opts.text, template: opts.template, name: ref.current.name, role: ref.current.role,
+      device: ref.current.deviceId, lang: ref.current.sourceSpeech, time: now, fix, battery, voice: !!opts.audioUri,
+    });
+    const m: Message = {
+      id: sos.id, kind: "alert", text: opts.text || "SOS", template: opts.template, language: ref.current.sourceSpeech,
+      time: now, direction: "out", status: "queued", sos, audioUri: opts.audioUri,
+    };
+    await add(m);
+    let reached = false;
+    if (paired.current) {
+      try {
+        if (opts.audioUri && voicePeer.current) await Native.sendVoice(opts.audioUri, JSON.stringify({ ...m, kind: "voice", status: undefined }));
+        else await wire({ id: m.id, kind: "alert", text: m.text, template: m.template, language: m.language, time: now, sos });
+        reached = true;
+      } catch {
+        // The mesh copy below still goes out.
+      }
+    }
+    let meshProblem = "";
+    if (meshEnabledRef.current) {
+      try {
+        await Mesh.sendSOS(JSON.stringify(sos));
+        reached = true;
+      } catch (e: any) {
+        // A mesh problem must not undo an SOS the paired phone already received.
+        meshProblem = e?.message || String(e);
+      }
+    }
+    change({ messages: ref.current.messages.map((x) => (x.id === m.id && x.direction === "out" ? { ...x, status: reached ? "sent" : "failed" } : x)) });
+    feedback("message");
+    setText("");
+    if (!reached)
+      throw new Error(meshProblem || "SOS saved, but no phone is reachable. Turn on Bluetooth so the mesh can start.");
+    if (withLocation && !fix) setError("SOS sent without location: no GPS fix within 8 seconds.");
+  }
   async function retry(m: Message) {
     if (!paired.current) throw new Error("Connect first");
     if (m.kind === "voice") {
@@ -1060,7 +1254,7 @@ export default function App() {
       prepare: async () => {
         setError("");
         clipLanguage.current = ref.current.sourceSpeech;
-        clipMode.current = ref.current.voiceMode;
+        clipMode.current = pttPurpose.current === "sos" ? "original" : ref.current.voiceMode;
         if (
           clipMode.current === "translated" &&
           !packsRef.current[clipLanguage.current]
@@ -1085,6 +1279,14 @@ export default function App() {
       start: () => Native.startRecording(),
       cancel: () => Native.cancelRecording(),
       finish: async () => {
+        if (pttPurpose.current === "sos") {
+          const uri = await Native.finishVoice();
+          const transcript = packsRef.current[clipLanguage.current]
+            ? String(await Native.transcribeVoice(uri, clipLanguage.current).catch(() => "")).trim().slice(0, 500)
+            : "";
+          confirmSOS({ text: transcript || "Voice SOS", audioUri: uri });
+          return;
+        }
         if (clipMode.current === "original") {
           const uri = await Native.finishVoice();
           await sendOriginal(uri);
@@ -1100,12 +1302,17 @@ export default function App() {
       },
       release: async () => {
         requesting.current = false;
+        pttPurpose.current = "talk";
         if (localFloor.current) {
           localFloor.current = false;
           if (paired.current) await control("release");
         }
       },
     });
+  const beginSOS = () => {
+    pttPurpose.current = "sos";
+    begin();
+  };
   const begin = () => {
     setPttHint("");
     if (!busy && !audioBusy.current && !remoteFloor.current) ptt.current.press();
@@ -1218,8 +1425,8 @@ export default function App() {
         accessibilityLabel={name}
         value={value}
         onValueChange={onChange}
-        trackColor={{ false: c.line, true: "#9CD5B2" }}
-        thumbColor={value ? "#347453" : "#DDD"}
+        trackColor={{ false: c.line, true: P.switchOn }}
+        thumbColor={value ? P.green : P.line}
       />
     </View>
   );
@@ -1237,7 +1444,7 @@ export default function App() {
             }
           />
         ) : (
-          <Text style={{ fontSize: 32, color: "#347453" }}>
+          <Text style={{ fontSize: 32, color: P.green }}>
             {data.name.slice(0, 1).toUpperCase() || "T"}
           </Text>
         )}
@@ -1320,10 +1527,10 @@ export default function App() {
           <Text style={[s.small, { color: c.muted, marginTop: 0 }]}>{detail}</Text>
         </View>
         {ok ? (
-          <View style={[s.packLine, { marginTop: 0 }]}><Icon name="check-circle" size={18} color="#2BAA72" /><Text style={{ color: "#2BAA72", fontSize: 12, fontWeight: "700" }}>On</Text></View>
+          <View style={[s.packLine, { marginTop: 0 }]}><Icon name="check-circle" size={18} color={P.green} /><Text style={{ color: P.green, fontSize: 12, fontWeight: "700" }}>On</Text></View>
         ) : fix ? (
-          <Pressable accessibilityRole="button" onPress={() => run(fix)} style={[s.downloadButton, { borderColor: "#1769AA", paddingVertical: 6 }]}>
-            <Text style={{ color: "#1769AA", fontWeight: "700", fontSize: 13 }}>{action}</Text>
+          <Pressable accessibilityRole="button" onPress={() => run(fix)} style={[s.downloadButton, { borderColor: P.green, paddingVertical: 6 }]}>
+            <Text style={{ color: P.green, fontWeight: "700", fontSize: 13 }}>{action}</Text>
           </Pressable>
         ) : null}
       </View>
@@ -1428,15 +1635,32 @@ export default function App() {
     const p = packInfo(code);
     if (p.builtInSpeech)
       return (
-        <View style={s.packLine}><Icon name="check-circle" size={14} color="#2BAA72" /><Text style={{ color: "#2BAA72", fontSize: 13 }}>Built-in · works offline</Text></View>
+        <View style={s.packLine}><Icon name="check-circle" size={14} color={P.green} /><Text style={{ color: P.green, fontSize: 13 }}>Built-in · works offline</Text></View>
+      );
+    // An installed pack whose release files changed: only the changed files are fetched.
+    const updateBytes = Number(packDetails[code]?.updateBytes) || 0;
+    if (p.state === "installed" && updateBytes > 0)
+      return (
+        <View style={s.packLine}>
+          <Icon name="update" size={14} color={P.green} />
+          <View style={{ flex: 1 }}>
+            <Text style={{ color: P.green, fontSize: 13 }}>{downloading === code ? "Updating…" : "Improved version available"}</Text>
+            <NativeText style={{ color: c.muted, fontSize: 12 }}>{`${i18n.mb(updateBytes)} MB`}</NativeText>
+          </View>
+          {downloading !== code && (
+            <Pressable onPress={() => run(() => install(code))} hitSlop={8}>
+              <Text style={{ color: P.green, fontSize: 13, fontWeight: "700" }}>Update</Text>
+            </Pressable>
+          )}
+        </View>
       );
     if (p.state === "installed")
       return (
         <View style={s.packLine}>
-          <Icon name="check-circle" size={14} color="#2BAA72" />
-          <Text style={{ color: "#2BAA72", flex: 1, fontSize: 13 }}>Installed · works offline</Text>
+          <Icon name="check-circle" size={14} color={P.green} />
+          <Text style={{ color: P.green, flex: 1, fontSize: 13 }}>Installed · works offline</Text>
           <Pressable onPress={() => removePack(code, name)} hitSlop={8}>
-            <Text style={{ color: "#B84A29", fontSize: 13 }}>Remove</Text>
+            <Text style={{ color: P.red, fontSize: 13 }}>Remove</Text>
           </Pressable>
         </View>
       );
@@ -1475,7 +1699,7 @@ export default function App() {
                 Native.cancelDownload();
               }}
             >
-              <Text style={{ color: "#B84A29", fontSize: 13 }}>Pause</Text>
+              <Text style={{ color: P.red, fontSize: 13 }}>Pause</Text>
             </Pressable>
           </View>
         </View>
@@ -1491,12 +1715,12 @@ export default function App() {
           onPress={() => run(() => install(code))}
           style={[
             s.downloadButton,
-            { borderColor: "#1769AA", opacity: downloading ? 0.45 : 1 },
+            { borderColor: P.green, opacity: downloading ? 0.45 : 1 },
           ]}
         >
           <View style={[s.packLine, { marginTop: 0 }]}>
-            <Icon name="download" size={16} color="#1769AA" />
-            <NativeText style={{ color: "#1769AA", fontWeight: "700" }}>
+            <Icon name="download" size={16} color={P.green} />
+            <NativeText style={{ color: P.green, fontWeight: "700" }}>
               {`${i18n.translate(verb, activeUi)} · ${partial ? `${i18n.mb(p.downloadedBytes)} / ` : ""}${i18n.mb(p.expectedBytes)} MB`}
             </NativeText>
           </View>
@@ -1528,7 +1752,7 @@ export default function App() {
         <Text style={{ color: c.ink, flex: 1, fontSize: 15, fontWeight: "600" }}>
           {name}
         </Text>
-        <NativeText style={{ color: "#1769AA", fontSize: 15, fontWeight: "700" }}>
+        <NativeText style={{ color: P.green, fontSize: 15, fontWeight: "700" }}>
           {value}
         </NativeText>
         <NativeText style={{ color: c.muted, fontSize: 20 }}> ›</NativeText>
@@ -1575,18 +1799,28 @@ export default function App() {
             </Text>
             {packInfo(data.targetTranslation).builtInVoice ? (
               <View style={s.packLine}>
-                <Icon name="check-circle" size={14} color="#2BAA72" />
-                <Text style={{ color: "#2BAA72", fontSize: 13 }}>Built-in voice · no download</Text>
+                <Icon name="check-circle" size={14} color={P.green} />
+                <Text style={{ color: P.green, fontSize: 13 }}>Built-in voice · no download</Text>
               </View>
             ) : (
               packAction(data.targetTranslation, voice?.name || data.targetTranslation)
             )}
-            {["hi", "mr"].includes(data.targetTranslation) && (
+            {data.targetTranslation !== "en" && translationPairs.OFFLINE_TRANSLATION.includes(data.targetTranslation) && (
               <>
                 <Text style={[s.small, { color: c.muted }]}>
-                  Translation pack · Hindi ↔ Marathi
+                  Translation pack · Indian languages
                 </Text>
                 {packAction("translation", i18n.translate("Shared translation", activeUi))}
+              </>
+            )}
+            {/* Optional: lets this phone translate English messages, or translate into English.
+                Shown once the release manifest carries the pack. */}
+            {(manifest || upstream).packs?.["translation-en"] && (
+              <>
+                <Text style={[s.small, { color: c.muted }]}>
+                  English translation pack · English ↔ Indian languages
+                </Text>
+                {packAction("translation-en", i18n.translate("English translation pack", activeUi))}
               </>
             )}
           </View>,
@@ -1613,7 +1847,7 @@ export default function App() {
             >
               <Text
                 style={{
-                  color: data.voiceMode === mode ? "#FFF" : c.ink,
+                  color: data.voiceMode === mode ? P.cream : c.ink,
                   fontWeight: "700",
                   textAlign: "center",
                 }}
@@ -1695,7 +1929,7 @@ export default function App() {
                       s.pickRow,
                       { borderColor: c.line },
                       selected && {
-                        backgroundColor: dark ? "#173B61" : "#E3F0FB",
+                        backgroundColor: P.tint,
                       },
                     ]}
                   >
@@ -1714,7 +1948,7 @@ export default function App() {
                         style={[
                           s.badge,
                           {
-                            color: ready ? "#2BAA72" : c.muted,
+                            color: ready ? P.green : c.muted,
                             borderColor: c.line,
                           },
                         ]}
@@ -1723,7 +1957,7 @@ export default function App() {
                       </NativeText>
                     )}
                     <View style={{ width: 24, alignItems: "flex-end" }}>
-                      {selected && <Icon name="check" size={20} color="#1769AA" label={localized("Selected")} />}
+                      {selected && <Icon name="check" size={20} color={P.green} label={localized("Selected")} />}
                     </View>
                   </Pressable>
                 );
@@ -1735,19 +1969,54 @@ export default function App() {
       </Modal>
     );
   }
-  function messages() {
+  /** Message cards: chat order (oldest first, bubbles) on Talk, newest first in History. */
+  function messages(chat = false) {
     const items = data.messages.filter(
-      (m) => filter === "all" || m.direction === filter || m.status === filter,
+      (m) => chat || filter === "all" || m.direction === filter || m.status === filter,
     );
+    const target = data.targetTranslation;
+    const playButton = (m: Message, original: boolean, title: string, icon: string) => {
+      const key = `${m.id}:${original || !spokenFor(m) ? "o" : "s"}`;
+      const active = playing?.key === key;
+      return button(
+        active && !playing!.paused ? "Pause" : active ? "Resume" : title,
+        () => (active && !playing!.paused ? pausePlayback() : run(() => play(m, original))),
+        true,
+        false,
+        active && !playing!.paused ? "pause" : icon,
+      );
+    };
     return items.length ? (
-      items
-        .slice()
-        .reverse()
-        .map((m) =>
-          card(
+      (chat ? items : items.slice().reverse())
+        .map((m) => isSOS(m) ? (
+          <Pressable
+            key={m.id}
+            accessibilityRole="button"
+            accessibilityLabel={`${localized("SOS")} ${m.direction === "out" ? localized("You") : m.sos?.name || m.name || ""}`}
+            onPress={() => setSosOpen(m)}
+            style={[s.sosCard, chat ? (m.direction === "out" ? s.bubbleOut : s.bubbleIn) : undefined]}
+          >
+            <View style={[s.packLine, { marginTop: 0 }]}>
+              <Icon name="alarm-light" size={20} color={P.cream} />
+              <NativeText style={{ color: P.cream, fontWeight: "800", fontSize: 16 }}>SOS</NativeText>
+              <NativeText numberOfLines={1} style={{ color: P.cream, flex: 1, fontSize: 13 }}>
+                {`${m.direction === "out" ? localized("You") : m.sos?.name || m.name || ""} · ${new Date(m.time).toLocaleTimeString()}`}
+              </NativeText>
+            </View>
+            <NativeText style={{ color: P.cream, fontSize: 17, fontWeight: "700", marginVertical: 6 }}>
+              {m.template ? phrase(m.template, data.targetTranslation) || m.text : m.translated || m.text}
+            </NativeText>
+            <View style={[s.packLine, { marginTop: 0 }]}>
+              <Icon name={m.sos?.loc ? "map-marker" : "map-marker-off-outline"} size={14} color={P.cream} />
+              <Text style={{ color: P.cream, fontSize: 12 }}>{m.sos?.loc ? "Location attached · tap for details" : "No location · tap for details"}</Text>
+            </View>
+          </Pressable>
+        ) : (
+          <View key={m.id} style={chat ? [s.bubble, m.direction === "out" ? s.bubbleOut : s.bubbleIn, { backgroundColor: m.direction === "out" ? P.tint : c.card, borderColor: c.line }] : undefined}>
+          {(chat ? (x: React.ReactNode) => x : card)(
             <>
               {note(
-                `${m.direction === "out" ? "You" : m.name || "Peer"}${m.mesh ? (m.private ? ` · ${i18n.translate("Private · mesh", activeUi)}` : ` · ${i18n.translate("Public", activeUi)}`) : ` · ${i18n.translate("Private", activeUi)}`} · ${m.language === "und" ? i18n.translate("Language unknown", activeUi) : m.language.toUpperCase()} · ${new Date(m.time).toLocaleTimeString()} · ${i18n.translate(m.mesh && m.status === "custody" ? "Relay accepted a piece; recipient delivery pending" : m.status, activeUi)}`,
+                `${m.direction === "out" ? "You" : m.name || "Peer"}${m.mesh ? (m.private ? ` · ${i18n.translate("Private · mesh", activeUi)}` : ` · ${i18n.translate("Public", activeUi)}`) : ` · ${i18n.translate("Private", activeUi)}`} · ${m.language === "und" ? i18n.translate("Language unknown", activeUi) : m.language.toUpperCase()} · ${new Date(m.time).toLocaleTimeString()} · ${i18n.translate(m.mesh && m.status === "custody" ? "Relay accepted a piece; recipient delivery pending" : m.status, activeUi)}${m.mesh && m.status === "delivered" && m.deliveredHops !== undefined ? ` · ${m.deliveredHops ? `${i18n.translate("through", activeUi)} ${m.deliveredHops} ${i18n.translate(m.deliveredHops === 1 ? "phone" : "phones", activeUi)}` : i18n.translate("direct", activeUi)}` : ""}`,
               )}
               <NativeText selectable style={[s.message, { color: c.ink }]}>
                 {m.template
@@ -1758,22 +2027,30 @@ export default function App() {
                       : m.text)}
               </NativeText>
               {!!m.translated && (
-                <NativeText selectable style={[s.small, { color: c.muted, marginTop: -6, marginBottom: 8 }]}>
+                <NativeText selectable style={{ color: c.muted, fontSize: 12, marginBottom: 8 }}>
                   {`${m.language.toUpperCase()}: ${m.kind === "voice" ? m.transcript : m.text}`}
                 </NativeText>
               )}
-              <View style={s.row}>
-                {(m.kind !== "voice" || !!m.translated || !!m.transcript) &&
-                  button(
-                    langOf(data.targetTranslation)?.native || "Play",
-                    () => run(() => play(m), "Speaking…"),
-                    true,
-                    false,
-                    "volume-high",
-                  )}
-                {m.kind === "voice" &&
-                  !!m.audioUri &&
-                  button("Original voice", () => run(() => play(m, true), "Speaking…"), true, false, "play")}
+              {m.direction === "in" && !m.template && translationPairs.translationPlan(m.language, target) === "unsupported" && (
+                <View style={{ marginBottom: 8 }}>
+                  <NativeText style={{ color: c.muted, fontSize: 12 }}>{`${langOf(m.language)?.name || m.language} → ${langOf(target)?.name || target}`}</NativeText>
+                  <NativeText style={{ color: c.muted, fontSize: 12 }}>{i18n.translate("translation isn't available offline · showing original", activeUi)}</NativeText>
+                </View>
+              )}
+              {m.direction === "in" && !m.template && !m.translated &&
+                translationPairs.translationPlan(m.language, target) === "translate" &&
+                !packs[translationPairs.packFor(m.language, target)] && (
+                  <NativeText style={{ color: c.muted, fontSize: 12, marginBottom: 8 }}>
+                    {i18n.translate(m.language === "en" || target === "en" ? "Download the English translation pack in Settings to translate this" : "Download the translation pack in Settings to translate this", activeUi)}
+                  </NativeText>
+                )}
+              <View style={[s.row, { gap: 6 }]}>
+                {playing?.key?.startsWith(`${m.id}:`) && !playing.paused && <PlayingBars color={P.greenDark} />}
+                {!!spokenFor(m) &&
+                  playButton(m, false, langOf(spokenFor(m)!.lang)?.native || "Play", "volume-high")}
+                {m.kind === "voice" && !!m.audioUri && playButton(m, true, "Original voice", "play")}
+                {m.mesh && m.private && m.direction === "in" && !!m.from &&
+                  button("Reply", () => { setChatPeer(meshDirRef.current[m.from!] || { id: m.from, name: m.name, hops: 0 }); setTab("talk"); }, true, false, "reply")}
                 {m.direction === "out" &&
                   !m.mesh &&
                   m.status !== "delivered" &&
@@ -1786,11 +2063,12 @@ export default function App() {
               </View>
             </>,
             m.id,
-          ),
-        )
+          )}
+          </View>
+        ))
     ) : (
       <View style={s.empty}>
-        <Icon name="message-processing-outline" size={44} color="#2D8DD0" />
+        <Icon name="message-processing-outline" size={44} color={P.greenDark} />
         {title("A little closer, in every language.")}
         {note("Connect two phones or save a message for later.")}
       </View>
@@ -1885,10 +2163,11 @@ export default function App() {
   useEffect(() => {
     if (loaded && data.setup) Native.warmUp(data.targetTranslation).catch(() => {});
   }, [loaded, data.setup, data.targetTranslation, packs.translation]);
-  // Opening Connect while idle starts a scan right away.
+  // Direct pairing is optional: a Bluetooth/Wi-Fi scan starts only when that section is opened,
+  // so it does not interrupt the mesh while the user simply picks someone to chat with.
   useEffect(() => {
-    if (showConnect && !connected && ["idle", "failed"].includes(connectionState)) findPhones();
-  }, [showConnect]);
+    if (showConnect && showPairing && !connected && ["idle", "failed"].includes(connectionState)) findPhones();
+  }, [showConnect, showPairing]);
   useEffect(() => {
     if (pttState === "recording") {
       const pulse = Animated.loop(
@@ -1917,6 +2196,169 @@ export default function App() {
       bounciness: 7,
     }).start();
   }, [pttScale, pttState]);
+  /** Details of one SOS: who, when, what, where (with distance from this phone), battery and route. */
+  function sosSheet() {
+    const m = sosOpen;
+    const sos = m?.sos;
+    const d = sos ? sosLib.sosDistance(sos, locationPolicy.usableLocation(location, clock) ? location : null) : null;
+    const cardinal = d ? ["N", "NE", "E", "SE", "S", "SW", "W", "NW"][Math.round(d.bearing / 45) % 8] : "";
+    const row = (icon: string, name: string, value: string) => (
+      <View style={[s.permRow, { borderColor: c.line, borderTopWidth: StyleSheet.hairlineWidth }]}>
+        <View style={s.rowIconBox}><Icon name={icon} size={20} color={P.red} /></View>
+        <Text style={{ color: c.muted, width: 92, fontSize: 13 }}>{name}</Text>
+        <NativeText selectable style={{ color: c.ink, flex: 1, fontSize: 14, fontWeight: "600" }}>{value}</NativeText>
+      </View>
+    );
+    const coords = sos?.loc ? `${sos.loc.lat.toFixed(6)}, ${sos.loc.lng.toFixed(6)}` : "";
+    return (
+      <Modal visible={!!m} transparent animationType="slide" onRequestClose={() => setSosOpen(null)}>
+        <View style={s.overlay}>
+          <View style={[s.sheet, { backgroundColor: c.bg }]}>
+            <ScrollView>
+              <View style={[s.sosHeader, { backgroundColor: P.red }]}>
+                <Icon name="alarm-light" size={28} color={P.cream} />
+                <View style={{ flex: 1 }}>
+                  <NativeText style={{ color: P.cream, fontSize: 22, fontWeight: "800" }}>SOS</NativeText>
+                  <NativeText style={{ color: P.cream }}>{m ? (m.direction === "out" ? localized("You") : sos?.name || m.name || "") : ""}</NativeText>
+                </View>
+                <Pressable accessibilityRole="button" accessibilityLabel={localized("Close")} hitSlop={12} onPress={() => setSosOpen(null)}>
+                  <Icon name="close" size={26} color={P.cream} />
+                </Pressable>
+              </View>
+              {!!m && (
+                <>
+                  <NativeText selectable style={{ color: c.ink, fontSize: 19, fontWeight: "700", marginVertical: 12 }}>
+                    {m.template ? phrase(m.template, data.targetTranslation) || m.text : m.translated || m.text}
+                  </NativeText>
+                  {row("account-alert-outline", localized("From"), `${m.direction === "out" ? localized("You") : sos?.name || m.name || ""} · ${i18n.translate(roleLabels[sos?.role] || "Citizen", activeUi)} · ${i18n.translate(sos?.role === "emergency_staff" ? "Unverified emergency staff" : "Self-declared · unverified", activeUi)}`)}
+                  {row("clock-outline", localized("Sent"), `${new Date(sos?.time || m.time).toLocaleString()} · ${Math.max(0, Math.round((clock - (sos?.time || m.time)) / 60000))} ${i18n.translate("min ago", activeUi)}`)}
+                  {sos?.loc
+                    ? row("map-marker", localized("Location"), `${coords}${sos.loc.acc !== null ? ` · ±${Math.round(sos.loc.acc)} m` : ""}`)
+                    : row("map-marker-off-outline", localized("Location"), localized("Not shared"))}
+                  {!!sos?.loc && row("navigation-variant-outline", localized("From you"), d ? `${d.distance >= 1000 ? `${(d.distance / 1000).toFixed(1)} km` : `${Math.round(d.distance)} m`} · ${cardinal}` : localized("Waiting for your GPS"))}
+                  {sos?.battery !== null && sos?.battery !== undefined && row("battery-medium", localized("Battery"), `${sos.battery}%`)}
+                  {row("access-point-network", localized("Route"), m.mesh ? `${localized("Mesh")}${m.deliveredHops ? ` · ${i18n.translate("through", activeUi)} ${m.deliveredHops} ${i18n.translate(m.deliveredHops === 1 ? "phone" : "phones", activeUi)}` : ""}` : m.direction === "out" ? localized("Paired phone and mesh") : localized("Paired direct"))}
+                  {!!m.audioUri && button("Play voice", () => run(() => play(m, true)), true, false, "play")}
+                  {!!sos?.loc &&
+                    button(
+                      "Share location",
+                      () => Share.share({ message: `SOS ${sos.name}: ${coords}${sos.loc.acc !== null ? ` (±${Math.round(sos.loc.acc)} m)` : ""}\ngeo:${sos.loc.lat},${sos.loc.lng}` }),
+                      false,
+                      false,
+                      "share-variant-outline",
+                    )}
+                  {button("Close", () => setSosOpen(null), true)}
+                </>
+              )}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+    );
+  }
+  /** WhatsApp-style Talk screen: compact chat bar, scrolling bubbles, composer fixed above the nav bar. */
+  function talkScreen() {
+    const path = sendPath();
+    const name = path.kind === "direct" ? peerName : chatPeer ? chatPeer.name : connectionState === "reconnecting" ? "Reconnecting…" : "Nobody selected";
+    const route =
+      path.kind === "direct"
+        ? i18n.translate("Private · direct link", activeUi)
+        : chatPeer
+          ? `${i18n.translate("Private · via mesh", activeUi)}${meshDir[chatPeer.id]?.hops ? ` · ${i18n.translate("through", activeUi)} ${meshDir[chatPeer.id].hops} ${i18n.translate(meshDir[chatPeer.id].hops === 1 ? "phone" : "phones", activeUi)}` : ""}`
+          : i18n.translate("Tap People to choose who to talk to", activeUi);
+    const listening = pttState === "recording" || pttState === "arming";
+    const busyMic = peerTalking || pttState === "processing" || (!!busy && pttState === "idle");
+    return (
+      <View style={{ flex: 1 }}>
+        <View style={[s.chatBar, { backgroundColor: c.card, borderColor: c.line }]}>
+          <Icon name={path.kind !== "none" ? "lock" : "account-question-outline"} size={20} color={path.kind !== "none" ? P.green : c.muted} />
+          <View style={{ flex: 1 }}>
+            <Text numberOfLines={1} style={{ color: c.ink, fontWeight: "800", fontSize: 16 }}>{name}</Text>
+            <NativeText numberOfLines={1} style={{ color: c.muted, fontSize: 12 }}>{route}</NativeText>
+          </View>
+          {!!chatPeer && (
+            <Pressable accessibilityRole="button" accessibilityLabel={localized("End chat")} hitSlop={8} onPress={() => setChatPeer(null)}>
+              <Icon name="close" size={20} color={c.muted} />
+            </Pressable>
+          )}
+          <Pressable accessibilityRole="button" onPress={() => setShowConnect(true)} style={[s.peopleButton, { borderColor: P.green }]}>
+            <Icon name="account-group-outline" size={18} color={P.green} />
+            <Text style={{ color: P.green, fontWeight: "700" }}>People</Text>
+          </Pressable>
+        </View>
+        <ScrollView
+          ref={chatScroll}
+          style={{ flex: 1 }}
+          contentContainerStyle={{ padding: 12, paddingBottom: 6 }}
+          keyboardShouldPersistTaps="handled"
+          onContentSizeChange={() => chatScroll.current?.scrollToEnd({ animated: true })}
+          // The keyboard shrinks the list: keep the newest message in view, like any chat app.
+          onLayout={() => chatScroll.current?.scrollToEnd({ animated: false })}
+        >
+          {messages(true)}
+        </ScrollView>
+        <View style={[s.composer, { backgroundColor: c.card, borderColor: c.line }]}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6, paddingBottom: 6 }} keyboardShouldPersistTaps="handled">
+            {Object.entries(templates)
+              .slice(0, 3)
+              .map(([key, p]) => (
+                <Pressable key={key} onPress={() => setText(p[data.sourceSpeech])} style={[s.chipSmall, { borderColor: c.line }]}>
+                  <NativeText style={{ color: c.ink, fontSize: 13 }}>{p[data.sourceSpeech]}</NativeText>
+                </Pressable>
+              ))}
+          </ScrollView>
+          {data.voiceMode === "translated" && !packs[data.sourceSpeech] && (
+            <Pressable accessibilityRole="button" onPress={() => setPackPrompt(data.sourceSpeech)} style={[s.packLine, { marginTop: 0, marginBottom: 6 }]}>
+              <Icon name="alert-outline" size={16} color={P.sand} />
+              <Text style={{ color: c.ink, fontSize: 12, flex: 1 }}>Speech pack needed for Translated speech · tap to fix</Text>
+            </Pressable>
+          )}
+          {(listening || busyMic || !!pttHint) && (
+            <Text style={{ color: listening ? P.greenDark : busyMic ? P.red : c.muted, fontSize: 12, marginBottom: 6, fontWeight: "700" }}>
+              {pttHint || (pttState === "recording" ? "Listening… release to send" : pttState === "arming" ? "Starting…" : peerTalking ? "Busy · peer is speaking" : "Busy…")}
+            </Text>
+          )}
+          <View style={s.composerRow}>
+            <TextInput
+              accessibilityLabel={localized("Type a message or hold to talk")}
+              placeholder={localized("Message")}
+              placeholderTextColor={c.muted}
+              value={text}
+              onChangeText={setText}
+              multiline
+              maxLength={2000}
+              style={[s.composerInput, { color: c.ink, borderColor: c.line, backgroundColor: c.bg }]}
+            />
+            {text.trim() ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={localized(path.kind !== "none" ? "Send message" : "Save for later")}
+                disabled={!!busy}
+                onPress={() => run(() => send(text))}
+                style={[s.roundButton, { backgroundColor: P.green, opacity: busy ? 0.5 : 1 }]}
+              >
+                <Icon name={path.kind !== "none" ? "send" : "content-save-outline"} size={24} color={P.cream} />
+              </Pressable>
+            ) : (
+              <View
+                accessible
+                accessibilityRole="button"
+                accessibilityLabel={localized("Hold to talk")}
+                onStartShouldSetResponder={() => true}
+                onResponderTerminationRequest={() => false}
+                onResponderGrant={begin}
+                onResponderRelease={end}
+                onResponderTerminate={end}
+                style={[s.roundButton, { backgroundColor: listening ? P.greenDark : busyMic ? P.red : P.green }]}
+              >
+                <Icon name={listening ? "microphone" : busyMic ? "timer-sand" : "microphone-outline"} size={26} color={P.cream} />
+              </View>
+            )}
+          </View>
+        </View>
+      </View>
+    );
+  }
   // Green: channel open. Blue: listening. Red: busy (peer speaking, processing or playing).
   const channelBusy = peerTalking || pttState === "processing" || (!!busy && pttState === "idle");
   const listening = pttState === "recording" || pttState === "arming";
@@ -1934,11 +2376,11 @@ export default function App() {
         onResponderTerminate={end}
         style={[
           s.mic,
-          { backgroundColor: listening ? "#2D8DD0" : channelBusy ? "#D35D5D" : "#2BAA72" },
+          { backgroundColor: listening ? P.greenDark : channelBusy ? P.red : P.green },
         ]}
       >
-        <Icon name={listening ? "microphone" : channelBusy ? "timer-sand" : "microphone-outline"} size={30} color="#FFF" />
-        <Text style={{ color: "#FFF", fontWeight: "800", textAlign: "center" }}>
+        <Icon name={listening ? "microphone" : channelBusy ? "timer-sand" : "microphone-outline"} size={30} color={P.cream} />
+        <Text style={{ color: P.cream, fontWeight: "800", textAlign: "center" }}>
           {pttState === "recording"
             ? "Listening… release to send"
             : pttState === "arming"
@@ -1975,20 +2417,20 @@ export default function App() {
         ) : (
           meshPeople.map((p: any) => (
             <View key={p.id} style={[s.peerRow, { backgroundColor: c.card, borderColor: c.line }]}>
-              <View style={[s.peerIcon, { backgroundColor: p.hops ? "#FBE9DF" : "#E8F3EC" }]}>
-                <Icon name={p.hops ? "transit-connection-variant" : "access-point"} size={20} color={p.hops ? "#D47743" : "#2BAA72"} />
+              <View style={[s.peerIcon, { backgroundColor: p.hops ? P.tint : P.tint }]}>
+                <Icon name={p.hops ? "transit-connection-variant" : "access-point"} size={20} color={p.hops ? P.sand : P.green} />
               </View>
               <View style={{ flex: 1 }}>
                 <NativeText numberOfLines={1} style={{ color: c.ink, fontWeight: "700", fontSize: 15 }}>
                   {p.name}
                 </NativeText>
                 <NativeText style={[s.small, { color: c.muted, marginTop: 0 }]}>
-                  {`${i18n.translate(roleLabels[p.role] || "Unknown role", activeUi)} · ${p.hops ? `${i18n.translate("via", activeUi)} ${p.hops} ${i18n.translate(p.hops === 1 ? "phone" : "phones", activeUi)}` : i18n.translate("Nearby", activeUi)}`}
+                  {`${i18n.translate(roleLabels[p.role] || "Unknown role", activeUi)} · ${i18n.translate("Unverified", activeUi)} · ${p.hops ? `${i18n.translate("through", activeUi)} ${p.hops} ${i18n.translate(p.hops === 1 ? "phone" : "phones", activeUi)}` : i18n.translate("Nearby", activeUi)}`}
                 </NativeText>
               </View>
               <Pressable accessibilityRole="button" onPress={() => startChat(p)} style={s.joinButton}>
-                <Text style={{ color: "#FFF", fontWeight: "700" }}>
-                  {chatPeer?.id === p.id ? "Chatting" : "Message"}
+                <Text style={{ color: P.cream, fontWeight: "700" }}>
+                  {chatPeer?.id === p.id ? "Chatting" : "Chat"}
                 </Text>
               </Pressable>
             </View>
@@ -2014,20 +2456,20 @@ export default function App() {
   const radarStatus: { icon: string; color: string; text: string; busy?: boolean; action?: string; onAction?: () => void } | null =
     refreshNote
       ? {
-          icon: "alert-circle-outline", color: "#D35D5D", text: localized(refreshNote),
+          icon: "alert-circle-outline", color: P.red, text: localized(refreshNote),
           action: refreshFix === "bluetooth" ? localized("Turn on") : refreshFix === "location" ? localized("Turn on") : refreshFix === "permissions" ? localized("Allow") : localized("Retry"),
           onAction: () => (refreshFix === "bluetooth" ? run(() => Native.enableBluetooth()) : refreshFix === "location" ? run(() => Native.openSystemSettings("location")) : refreshFix === "permissions" ? setRoute("permissions") : refreshRadar()),
         }
       : permState.location && permState.location !== "granted"
-        ? { icon: "map-marker-off-outline", color: "#D35D5D", text: localized("Location permission is off: distance and direction are unavailable."), action: localized("Allow"), onAction: () => setRoute("permissions") }
+        ? { icon: "map-marker-off-outline", color: P.red, text: localized("Location permission is off: distance and direction are unavailable."), action: localized("Allow"), onAction: () => setRoute("permissions") }
         : radios.bluetooth === false
-          ? { icon: "bluetooth-off", color: "#D35D5D", text: localized("Bluetooth is off. Turn it on to find nearby phones."), action: localized("Turn on"), onAction: () => run(() => Native.enableBluetooth()) }
+          ? { icon: "bluetooth-off", color: P.red, text: localized("Bluetooth is off. Turn it on to find nearby phones."), action: localized("Turn on"), onAction: () => run(() => Native.enableBluetooth()) }
           : !meshActive && meshIssue
-            ? { icon: "access-point-network-off", color: "#D35D5D", text: `${localized("Mesh connection problem")}: ${localized(meshIssue)}`, action: localized("Retry"), onAction: refreshRadar }
+            ? { icon: "access-point-network-off", color: P.red, text: `${localized("Mesh connection problem")}: ${localized(meshIssue)}`, action: localized("Retry"), onAction: refreshRadar }
             : refreshing || (meshActive && meshPeople.length === 0 && !connected)
-              ? { icon: "radar", color: "#2D8DD0", busy: true, text: localized("Scanning for nearby phones… Pull down to scan again.") }
+              ? { icon: "radar", color: P.greenDark, busy: true, text: localized("Scanning for nearby phones… Pull down to scan again.") }
               : !selfFresh
-                ? { icon: "crosshairs-question", color: "#E0A030", busy: true, text: localized(location ? "Improving your GPS fix (needs ±100 m or better)…" : "Acquiring your GPS position…") }
+                ? { icon: "crosshairs-question", color: P.sand, busy: true, text: localized(location ? "Improving your GPS fix (needs ±100 m or better)…" : "Acquiring your GPS position…") }
                 : visiblePeers.length === 0
                   ? { icon: "account-search-outline", color: c.muted, text: localized("No phones found nearby. Pull down to scan again.") }
                   : null;
@@ -2044,15 +2486,16 @@ export default function App() {
   }, [connected, sirenEnabled, radarDistance !== null && radarDistance <= 20]);
   // Header indicator: green when linked to a phone or the mesh, amber while connecting, red when offline.
   const busyLink = ["scanning", "hosting", "joining", "pairing", "reconnecting"].includes(connectionState);
+  const pairOpen = showPairing || connected || ["hosting", "joining", "pairing"].includes(connectionState);
   const network = connected
-    ? { color: "#2BAA72", label: "Connected" }
+    ? { color: P.green, label: "Connected" }
     : connectionState === "reconnecting"
-      ? { color: "#E0A030", label: "Reconnecting…" }
+      ? { color: P.sand, label: "Reconnecting…" }
       : meshActive && meshPeers.length > 0
-        ? { color: "#2BAA72", label: "Mesh" }
+        ? { color: P.green, label: "Mesh" }
         : busyLink
-          ? { color: "#E0A030", label: "Connecting…" }
-          : { color: "#D35D5D", label: "Offline" };
+          ? { color: P.sand, label: "Connecting…" }
+          : { color: P.red, label: "Offline" };
   let content: React.ReactNode;
   if (!loaded) content = note("Loading Talk2…");
   else if (!data.setup)
@@ -2066,7 +2509,7 @@ export default function App() {
                 flex: 1,
                 height: 5,
                 borderRadius: 3,
-                backgroundColor: i <= step ? "#2D8DD0" : c.line,
+                backgroundColor: i <= step ? P.greenDark : c.line,
               }}
             />
           ))}
@@ -2105,8 +2548,8 @@ export default function App() {
                   "Unverified emergency staff. Role verification is not available yet. You can skip future email OTP and continue without internet.",
                 )}
               <View style={s.packLine}>
-                <Icon name="lock-outline" size={14} color="#B84A29" />
-                <Text style={[s.small, { color: "#B84A29", flex: 1, marginTop: 0 }]}>Choose carefully: your role can't be changed later.</Text>
+                <Icon name="lock-outline" size={14} color={P.red} />
+                <Text style={[s.small, { color: P.red, flex: 1, marginTop: 0 }]}>Choose carefully: your role can't be changed later.</Text>
               </View>
             </>,
           )}
@@ -2132,22 +2575,10 @@ export default function App() {
                     onPress={() => change({ ui: code })}
                     style={[s.segmentItem, { borderColor: c.line }, data.ui === code && s.segmentActive]}
                   >
-                    <NativeText style={{ color: data.ui === code ? "#FFF" : c.ink, fontWeight: "700", textAlign: "center" }}>
+                    <NativeText style={{ color: data.ui === code ? P.cream : c.ink, fontWeight: "700", textAlign: "center" }}>
                       {langOf(code)?.native}
                     </NativeText>
                   </Pressable>
-                ))}
-              </View>
-              {label("LOOK & FEEL")}
-              <View style={s.row}>
-                {["system", "light", "dark"].map((x) => (
-                  <Button
-                    key={x}
-                    title={x}
-                    c={c}
-                    secondary={data.theme !== x}
-                    onPress={() => change({ theme: x })}
-                  />
                 ))}
               </View>
             </>,
@@ -2204,157 +2635,135 @@ export default function App() {
         )}
       </>
     );
-  else if (route === "gpt")
+  else if (route === "account") {
+    // Optional online account on the Talk2 backend. Nothing offline depends on it.
+    const user = data.account?.user;
+    const responder = !!user && accountLib.RESPONDER_ROLES.includes(user.role);
+    const set = (k: string) => (x: string) => setAcct((a) => ({ ...a, [k]: x }));
     content = (
       <>
         {button("Settings", () => setRoute(""), true, false, "arrow-left")}
-        {card(
-          <>
-            {title("Ask GPT · online")}
-            {note(
-              "Only the text submitted here goes to your Node server and OpenAI. Radio messages and GPS are never sent automatically.",
-            )}
-            {field(token, setToken, "Server access token", false, true)}
-            {field(text, setText, "Ask a question", true)}
-            {button(
-              "Send question online",
-              () =>
-                run(async () => {
-                  if (!data.backend.startsWith("https://"))
-                    throw new Error("Set an HTTPS backend URL in Settings");
-                  const r = await fetch(
-                    data.backend.replace(/\/$/, "") + "/api/assist",
-                    {
-                      method: "POST",
-                      headers: {
-                        "Content-Type": "application/json",
-                        Authorization: `Bearer ${token}`,
-                      },
-                      body: JSON.stringify({ text }),
-                      signal: AbortSignal.timeout(45000),
-                    },
-                  );
-                  const a = await r.json();
-                  if (!r.ok) throw new Error(a.error || `HTTP ${r.status}`);
-                  setAnswer(a.text);
-                }, "Asking GPT…"),
-              false,
-              !text.trim() || !!busy,
-            )}
-            <Text selectable style={[s.message, { color: c.ink }]}>
-              {answer}
-            </Text>
-          </>,
-        )}
-      </>
-    );
-  else if (tab === "talk")
-    content = (
-      <>
-        {card(
-          <>
-            <View style={s.row}>
-              <View style={{ flex: 1 }}>
-                <View style={[s.packLine, { marginTop: 0 }]}>
-                <Icon
-                  name={sendPath().kind !== "none" ? "lock" : connectionState === "reconnecting" ? "progress-clock" : "circle-outline"}
-                  size={18}
-                  color={sendPath().kind !== "none" ? "#2BAA72" : connectionState === "reconnecting" ? "#E0A030" : c.muted}
-                />
-                {title(
-                  sendPath().kind === "direct"
-                    ? peerName
-                    : chatPeer
-                      ? chatPeer.name
-                      : connectionState === "reconnecting"
-                        ? "Reconnecting…"
-                        : "Ready when you are",
-                )}
+        {!user ? (
+          card(
+            <>
+              {title(acct.mode === "signup" ? "Create an account" : "Log in")}
+              {note("Optional, needs internet. Volunteers and staff register so coordinators can find them. Messages, mesh and SOS never need an account.")}
+              {acct.mode === "signup" && field(acct.name, set("name"), "Your name")}
+              {field(acct.email, set("email"), "Email")}
+              {field(acct.password, set("password"), "Password (8+ characters)", false, true)}
+              {acct.mode === "signup" && (
+                <View style={s.packLine}>
+                  <Icon name="badge-account-outline" size={16} color={c.muted} />
+                  <Text style={{ color: c.muted, flex: 1, fontSize: 13 }}>Role from your setup</Text>
+                  <Text style={{ color: P.green, fontSize: 13, fontWeight: "700" }}>{roleLabels[data.role] || "Citizen"}</Text>
                 </View>
-                {note(
-                  sendPath().kind === "direct"
-                    ? "Private · direct link"
-                    : chatPeer
-                      ? `${i18n.translate("Private · via mesh", activeUi)}${meshDir[chatPeer.id]?.hops ? ` · ${meshDir[chatPeer.id].hops} ${i18n.translate(meshDir[chatPeer.id].hops === 1 ? "phone" : "phones", activeUi)}` : ""}`
-                      : connectionState === "reconnecting"
-                        ? meshDir[peerMeshId.current]
-                          ? "Messages go through the mesh meanwhile."
-                          : peerName
-                        : "Messages stay here until you connect.",
-                )}
-                {!!chatPeer && (
-                  <Pressable hitSlop={8} onPress={() => setChatPeer(null)}>
-                    <View style={s.packLine}><Icon name="close" size={14} color="#1769AA" /><Text style={{ color: "#1769AA", fontSize: 13, fontWeight: "700" }}>End chat</Text></View>
-                  </Pressable>
-                )}
-              </View>
-              {button(connected ? "Disconnect" : "Connect", () =>
-                connected ? disconnect() : setShowConnect(true),
               )}
-            </View>
-          </>,
-        )}
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={s.scrollPills}
-        >
-          {Object.entries(templates)
-            .slice(0, 3)
-            .map(([key, p]) => (
-              <Pressable
-                key={key}
-                onPress={() => setText(p[data.sourceSpeech])}
-                style={[s.chip, { borderColor: c.line }]}
-              >
-                <Text style={{ color: c.ink }}>{p[data.sourceSpeech]}</Text>
-              </Pressable>
-            ))}
-        </ScrollView>
-        {messages()}
-        {card(
+              {button(
+                acct.mode === "signup" ? "Create account" : "Log in",
+                () => run(authSubmit, "Connecting to server…"),
+                false,
+                !acct.email.trim() || !acct.password || !!busy,
+                acct.mode === "signup" ? "account-plus-outline" : "login",
+              )}
+              {button(
+                acct.mode === "signup" ? "I already have an account" : "Create a new account",
+                () => setAcct((a) => ({ ...a, mode: a.mode === "signup" ? "login" : "signup" })),
+                true,
+              )}
+            </>,
+          )
+        ) : (
           <>
-            {field(text, setText, "Type a message or hold to talk", true)}
-            {note(
-              data.voiceMode === "original"
-                ? "Original voice · release to send · no language model needed"
-                : data.reviewSpeech
-                  ? "Translated speech · release to review the transcript"
-                  : "Translated speech · release to send; your peer hears their selected language",
-            )}
-            {note(
-              `Active: ${langs.find((l) => l.code === data.sourceSpeech)?.name} · ${connected ? (voiceCapable ? "Peer supports original voice" : "Peer uses text/speech protocol") : "Offline clips are saved for retry"}`,
-            )}
-            {data.voiceMode === "translated" && !packs[data.sourceSpeech] && (
-              <Pressable
-                accessibilityRole="button"
-                onPress={() => setPackPrompt(data.sourceSpeech)}
-                style={[s.hint, { borderColor: "#D47743" }]}
-              >
-                <View style={[s.packLine, { marginTop: 0 }]}>
-                  <Icon name="alert-outline" size={16} color="#D47743" />
-                  <Text style={{ color: c.ink, fontSize: 13, flex: 1 }}>Speech pack needed for Translated speech · tap to fix</Text>
+            {card(
+              <>
+                <View style={[s.row, { flexWrap: "nowrap" }]}>
+                  <Icon name="account-circle-outline" size={36} color={P.green} />
+                  <View style={{ flex: 1 }}>
+                    <NativeText style={{ color: c.ink, fontSize: 17, fontWeight: "800" }}>{user.name}</NativeText>
+                    <NativeText style={{ color: c.muted, fontSize: 13 }}>{user.email}</NativeText>
+                    <Text style={{ color: P.green, fontSize: 13, fontWeight: "700" }}>{roleLabels[user.role] || "Citizen"}</Text>
+                  </View>
                 </View>
-              </Pressable>
+                {button("Refresh", () => run(refreshAccount, "Connecting to server…"), true, !!busy, "refresh")}
+                {button("Log out", () => run(logout, "Logging out…"), true, !!busy, "logout")}
+              </>,
             )}
-            {mic}
-            {button(
-              sendPath().kind !== "none" ? "Send message" : "Save for later",
-              () => run(() => send(text)),
-              false,
-              !text.trim() || !!busy,
-            )}
-          </>,
+            {responder &&
+              card(
+                <>
+                  {title("Volunteer details")}
+                  {note(user.onboarding?.completed ? "Saved. Coordinators can find you by city and skill; update any time." : "Tell coordinators how and where you can help.")}
+                  {field(acct.phone, set("phone"), "Phone number")}
+                  {field(acct.city, set("city"), "City")}
+                  {field(acct.skills, set("skills"), "Skills, comma separated (first aid, driving)")}
+                  {field(acct.languages, set("languages"), "Languages you speak, comma separated")}
+                  {label("AVAILABILITY")}
+                  <View style={[s.segment, { flexWrap: "wrap" }]}>
+                    {accountLib.AVAILABILITY.map((a: string) => (
+                      <Pressable
+                        key={a}
+                        accessibilityRole="button"
+                        accessibilityState={{ selected: acct.availability === a }}
+                        onPress={() => setAcct((x) => ({ ...x, availability: a }))}
+                        style={[s.segmentItem, { borderColor: c.line, minWidth: "45%" }, acct.availability === a && s.segmentActive]}
+                      >
+                        <Text style={{ color: acct.availability === a ? P.cream : c.ink, fontWeight: "700", textAlign: "center" }}>
+                          {accountLib.AVAILABILITY_LABELS[a]}
+                        </Text>
+                      </Pressable>
+                    ))}
+                  </View>
+                  {button(
+                    "Save details",
+                    () => run(saveVolunteerDetails, "Saving…"),
+                    false,
+                    !!busy || !acct.phone.trim() || !acct.city.trim() || !accountLib.parseList(acct.skills).length,
+                    "content-save-outline",
+                  )}
+                </>,
+              )}
+            {user.role === "emergency_staff" &&
+              card(
+                <>
+                  {title("Find volunteers")}
+                  {field(acct.searchCity, set("searchCity"), "City (optional)")}
+                  {field(acct.searchSkill, set("searchSkill"), "Skill (optional)")}
+                  {button("Search", () => run(findVolunteers, "Searching…"), false, !!busy, "magnify")}
+                  {volunteers &&
+                    (volunteers.length
+                      ? volunteers.map((v: any) => (
+                          <View key={v.id || v.email} style={[s.settingRow, { borderColor: c.line, paddingVertical: 10 }]}>
+                            <View style={[s.row, { flexWrap: "nowrap" }]}>
+                              <View style={{ flex: 1 }}>
+                                <NativeText style={{ color: c.ink, fontWeight: "700" }}>{v.name}</NativeText>
+                                <NativeText style={{ color: c.muted, fontSize: 13 }}>
+                                  {`${v.onboarding?.city || ""} · ${(v.onboarding?.skills || []).join(", ")}`}
+                                </NativeText>
+                              </View>
+                              {!!v.onboarding?.phone && (
+                                <Pressable accessibilityRole="button" accessibilityLabel={`Call ${v.name}`} hitSlop={8} onPress={() => Linking.openURL(`tel:${v.onboarding.phone}`)}>
+                                  <Icon name="phone-outline" size={22} color={P.green} />
+                                </Pressable>
+                              )}
+                            </View>
+                          </View>
+                        ))
+                      : note("No volunteers match."))}
+                </>,
+              )}
+          </>
         )}
       </>
     );
+  }
+  else if (tab === "talk") content = null; // rendered by talkScreen() with a pinned composer
   else if (tab === "radar")
     content = (
       <>
         {card(
           <>
             <View style={[s.row, { flexWrap: "nowrap" }]}>
-              <Icon name="access-point-network" size={22} color={meshActive ? "#2BAA72" : "#E0A030"} />
+              <Icon name="access-point-network" size={22} color={meshActive ? P.green : P.sand} />
               <View style={{ flex: 1 }}>
                 <Text style={{ color: c.ink, fontSize: 17, fontWeight: "800" }}>Nearby mesh</Text>
                 <NativeText style={[s.small, { color: c.muted, marginTop: 0 }]}>
@@ -2378,8 +2787,8 @@ export default function App() {
             {radarStatus.busy ? <ActivityIndicator color={radarStatus.color} /> : <Icon name={radarStatus.icon} size={20} color={radarStatus.color} />}
             <Text style={{ color: c.ink, flex: 1, fontSize: 13 }}>{radarStatus.text}</Text>
             {!!radarStatus.action && (
-              <Pressable accessibilityRole="button" onPress={radarStatus.onAction} style={[s.downloadButton, { borderColor: "#1769AA", paddingVertical: 6 }]}>
-                <Text style={{ color: "#1769AA", fontWeight: "700", fontSize: 13 }}>{radarStatus.action}</Text>
+              <Pressable accessibilityRole="button" onPress={radarStatus.onAction} style={[s.downloadButton, { borderColor: P.green, paddingVertical: 6 }]}>
+                <Text style={{ color: P.green, fontWeight: "700", fontSize: 13 }}>{radarStatus.action}</Text>
               </Pressable>
             )}
           </View>
@@ -2419,28 +2828,14 @@ export default function App() {
                 }
                 style={[s.segmentItem, s.segmentActive, { opacity: meshText.trim() ? 1 : 0.45 }]}
               >
-                <Text style={{ color: "#FFF", fontWeight: "800", textAlign: "center" }}>Send</Text>
+                <Text style={{ color: P.cream, fontWeight: "800", textAlign: "center" }}>Send</Text>
               </Pressable>
               <Pressable
                 accessibilityRole="button"
-                onPress={() =>
-                  Alert.alert("Broadcast SOS?", meshText || "Emergency assistance needed", [
-                    { text: "Cancel" },
-                    {
-                      text: "Broadcast SOS",
-                      style: "destructive",
-                      onPress: () =>
-                        run(async () => {
-                          if (!meshActive) throw new Error("Start BLE mesh first");
-                          await Mesh.sendSOS(meshText || "Emergency assistance needed");
-                          setMeshText("");
-                        }),
-                    },
-                  ])
-                }
-                style={[s.segmentItem, { backgroundColor: "#C2412D", borderColor: "#C2412D" }]}
+                onPress={() => confirmSOS({ text: meshText || "Emergency assistance needed" })}
+                style={[s.segmentItem, { backgroundColor: P.red, borderColor: P.red }]}
               >
-                <View style={[s.packLine, { justifyContent: "center", marginTop: 0 }]}><Icon name="alarm-light-outline" size={18} color="#FFF" /><Text style={{ color: "#FFF", fontWeight: "800", textAlign: "center" }}>SOS</Text></View>
+                <View style={[s.packLine, { justifyContent: "center", marginTop: 0 }]}><Icon name="alarm-light-outline" size={18} color={P.cream} /><Text style={{ color: P.cream, fontWeight: "800", textAlign: "center" }}>SOS</Text></View>
               </Pressable>
             </View>
             <Text style={[s.small, { color: c.muted }]}>
@@ -2478,56 +2873,61 @@ export default function App() {
   else if (tab === "alert")
     content = (
       <>
-        {label(
-          sendPath().kind !== "none"
-            ? "SEND TO YOUR PAIRED PHONE"
-            : "CONNECT BEFORE SENDING AN ALERT",
-        )}
-        {Object.entries(templates).map(([key, p]) =>
-          card(
-            <>
-              {title(p[data.sourceSpeech])}
-              {note(p.en)}
-              {button(
-                "Send alert",
-                () =>
-                  Alert.alert("Send this alert?", p[data.sourceSpeech], [
-                    { text: "Cancel" },
-                    {
-                      text: "Send",
-                      onPress: () =>
-                        run(() => send(p[data.sourceSpeech], "alert", key)),
-                    },
-                  ]),
-                false,
-                sendPath().kind === "none",
-              )}
-            </>,
-            key,
-          ),
-        )}
+        <View style={[s.sosIntro, { borderColor: P.red }]}>
+          <Icon name="alarm-light-outline" size={26} color={P.red} />
+          <Text style={{ color: c.ink, flex: 1, fontSize: 13 }}>
+            SOS goes to your paired phone and to every Talk2 phone nearby on the mesh. They hear a siren and can see your location if you share it.
+          </Text>
+        </View>
+        {label("QUICK SOS", "flash-alert-outline")}
+        {Object.entries(templates).map(([key, p]) => (
+          <Pressable
+            key={key}
+            accessibilityRole="button"
+            onPress={() => confirmSOS({ text: p[data.sourceSpeech], template: key })}
+            style={[s.sosOption, { borderColor: P.red, backgroundColor: c.card }]}
+          >
+            <Icon name="alert-octagon-outline" size={22} color={P.red} />
+            <View style={{ flex: 1 }}>
+              <NativeText style={{ color: c.ink, fontSize: 16, fontWeight: "700" }}>{p[data.sourceSpeech]}</NativeText>
+              {data.sourceSpeech !== "en" && <NativeText style={{ color: c.muted, fontSize: 12 }}>{p.en}</NativeText>}
+            </View>
+            <Icon name="send" size={20} color={P.red} />
+          </Pressable>
+        ))}
         {card(
           <>
-            {label("CUSTOM ALERT · MAX 200 CHARACTERS")}
+            {label("WRITE OR SAY WHAT YOU NEED", "message-alert-outline")}
             {field(
               text.slice(0, 200),
               (x) => setText(x.slice(0, 200)),
               "Describe what you need",
               true,
             )}
-            {mic}
+            <View style={[s.composerRow, { marginTop: 4 }]}>
+              <View
+                accessible
+                accessibilityRole="button"
+                accessibilityLabel={localized("Hold to record a voice SOS")}
+                onStartShouldSetResponder={() => true}
+                onResponderTerminationRequest={() => false}
+                onResponderGrant={beginSOS}
+                onResponderRelease={end}
+                onResponderTerminate={end}
+                style={[s.roundButton, { backgroundColor: pttState === "recording" ? P.greenDark : P.red }]}
+              >
+                <Icon name={pttState === "recording" ? "microphone" : "microphone-outline"} size={26} color={P.cream} />
+              </View>
+              <Text style={{ color: c.muted, flex: 1, fontSize: 12 }}>
+                {pttState === "recording" ? "Listening… release to send" : "Hold to record a voice SOS"}
+              </Text>
+            </View>
             {button(
-              "Send custom alert",
-              () =>
-                Alert.alert("Send custom alert?", text.slice(0, 200), [
-                  { text: "Cancel" },
-                  {
-                    text: "Send",
-                    onPress: () => run(() => send(text.slice(0, 200), "alert")),
-                  },
-                ]),
+              "Send SOS",
+              () => confirmSOS({ text: text.slice(0, 200) }),
               false,
-              sendPath().kind === "none" || !text.trim(),
+              !text.trim(),
+              "alarm-light-outline",
             )}
           </>,
         )}
@@ -2573,7 +2973,7 @@ export default function App() {
                     }
                   />
                 ) : (
-                  <NativeText style={{ fontSize: 24, color: "#347453" }}>
+                  <NativeText style={{ fontSize: 24, color: P.green }}>
                     {data.name.slice(0, 1).toUpperCase() || "T"}
                   </NativeText>
                 )}
@@ -2601,13 +3001,13 @@ export default function App() {
                       })
                     }
                   >
-                    <Text style={{ color: "#1769AA", fontSize: 13, fontWeight: "700" }}>
+                    <Text style={{ color: P.green, fontSize: 13, fontWeight: "700" }}>
                       Change photo
                     </Text>
                   </Pressable>
                   {!!data.photo && (
                     <Pressable hitSlop={8} onPress={() => change({ photo: "" })}>
-                      <Text style={{ color: "#B84A29", fontSize: 13 }}>Remove</Text>
+                      <Text style={{ color: P.red, fontSize: 13 }}>Remove</Text>
                     </Pressable>
                   )}
                 </View>
@@ -2670,36 +3070,6 @@ export default function App() {
         )}
         {card(
           <>
-            {label("APPEARANCE", "palette-outline")}
-            <View style={s.segment}>
-              {["system", "light", "dark"].map((x) => (
-                <Pressable
-                  key={x}
-                  accessibilityRole="button"
-                  accessibilityState={{ selected: data.theme === x }}
-                  onPress={() => change({ theme: x })}
-                  style={[
-                    s.segmentItem,
-                    { borderColor: c.line },
-                    data.theme === x && s.segmentActive,
-                  ]}
-                >
-                  <Text
-                    style={{
-                      color: data.theme === x ? "#FFF" : c.ink,
-                      fontWeight: "700",
-                      textAlign: "center",
-                    }}
-                  >
-                    {x === "system" ? "Auto" : x === "light" ? "Light" : "Dark"}
-                  </Text>
-                </Pressable>
-              ))}
-            </View>
-          </>,
-        )}
-        {card(
-          <>
             <Pressable
               accessibilityRole="button"
               accessibilityState={{ expanded: showAdvanced }}
@@ -2714,7 +3084,7 @@ export default function App() {
             </Pressable>
             {showAdvanced && (
               <>
-                {settingRow("robot-outline", "Ask GPT (online)", "", () => setRoute("gpt"))}
+                {settingRow("account-circle-outline", "Account (online)", data.account ? "Signed in" : "", () => { setRoute("account"); if (ref.current.account) run(refreshAccount); })}
                 {settingRow("chart-box-outline", "Performance & diagnostics", "", () =>
                   setRoute("analysis"),
                 )}
@@ -2726,12 +3096,6 @@ export default function App() {
                   }),
                 )}
                 {settingRow("bell-ring-outline", "Test alert sound", "", () => Native.alertTone())}
-                {label("OPTIONAL NODE BACKEND")}
-                {field(
-                  data.backend,
-                  (x) => change({ backend: x }),
-                  "https://your-talk2-server.example",
-                )}
               </>
             )}
           </>,
@@ -2744,7 +3108,7 @@ export default function App() {
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: c.bg }}>
       <StatusBar
-        barStyle={dark ? "light-content" : "dark-content"}
+        barStyle="dark-content"
         backgroundColor={c.bg}
       />
       <View style={s.header}>
@@ -2752,7 +3116,7 @@ export default function App() {
           {/* The app name is never translated: NativeText bypasses localization ("Talk" is also a tab label). */}
           <NativeText accessibilityLabel={i18n.BRAND} style={[s.brand, { color: c.ink }]}>
             {i18n.BRAND.slice(0, -1)}
-            <NativeText style={{ color: "#D47743" }}>{i18n.BRAND.slice(-1)}</NativeText>
+            <NativeText style={{ color: P.sand }}>{i18n.BRAND.slice(-1)}</NativeText>
           </NativeText>
           <Text style={{ color: c.muted, fontSize: 11, letterSpacing: 1 }}>
             A LITTLE CLOSER
@@ -2772,7 +3136,7 @@ export default function App() {
       </View>
       {!!error && (
         <Pressable onPress={() => setError("")} style={s.error}>
-          <Text style={{ color: "#792D1A" }}>{error} ×</Text>
+          <Text style={{ color: P.red }}>{error} ×</Text>
         </Pressable>
       )}
       {!!busy && (
@@ -2801,22 +3165,26 @@ export default function App() {
               Native.cancelDownload();
             }}
           >
-            <Text style={{ color: "#B84A29" }}>Cancel download</Text>
+            <Text style={{ color: P.red }}>Cancel download</Text>
           </Pressable>
         </View>
       )}
+      {data.setup && tab === "talk" && !route ? (
+        talkScreen()
+      ) : (
       <ScrollView
         keyboardShouldPersistTaps="handled"
         refreshControl={
           data.setup && tab === "radar" && !route ? (
-            <RefreshControl refreshing={refreshing} onRefresh={refreshRadar} colors={["#1769AA"]} tintColor="#1769AA" />
+            <RefreshControl refreshing={refreshing} onRefresh={refreshRadar} colors={[P.green]} tintColor={P.green} />
           ) : undefined
         }
         contentContainerStyle={{ padding: 20, paddingBottom: 30 }}
       >
         {content}
       </ScrollView>
-      {data.setup && (
+      )}
+      {data.setup && !keyboardOpen && (
         <View style={[s.nav, { borderColor: c.line, backgroundColor: c.card }]}>
           {["talk", "radar", "alert", "history", "settings"].map((key, i) => (
             <Pressable
@@ -2831,11 +3199,11 @@ export default function App() {
               style={[
                 s.navItem,
                 tab === key && {
-                  backgroundColor: dark ? "#173B61" : "#E3F0FB",
+                  backgroundColor: P.tint,
                 },
               ]}
             >
-              <Icon name={["message-text-outline", "radar", "alert-outline", "history", "cog-outline"][i]} size={24} color={key === "alert" ? "#BC6339" : c.ink} />
+              <Icon name={["message-text-outline", "radar", "alert-outline", "history", "cog-outline"][i]} size={24} color={key === "alert" ? P.red : c.ink} />
               <Text
                 style={{
                   color: c.ink,
@@ -2859,7 +3227,7 @@ export default function App() {
           <View style={[s.sheet, { backgroundColor: c.bg }]}>
             <ScrollView>
               <View style={s.sheetHeader}>
-                <Text style={[s.sheetTitle, { color: c.ink }]}>Connect nearby.</Text>
+                <Text style={[s.sheetTitle, { color: c.ink, flex: 1 }]}>Talk to someone nearby</Text>
                 <Pressable
                   accessibilityRole="button"
                   accessibilityLabel={localized("Close")}
@@ -2869,6 +3237,25 @@ export default function App() {
                   <Icon name="close" size={26} color={c.muted} />
                 </Pressable>
               </View>
+              <Text style={[s.small, { color: c.muted, marginTop: 0, marginBottom: 4 }]}>
+                No pairing or internet needed. Messages hop through other Talk2 phones; only the person you chat with can read them.
+              </Text>
+              {peopleList()}
+              <Pressable
+                accessibilityRole="button"
+                accessibilityState={{ expanded: pairOpen }}
+                onPress={() => setShowPairing(!showPairing)}
+                style={[s.settingPress, { marginTop: 10, borderTopWidth: StyleSheet.hairlineWidth, borderColor: c.line }]}
+              >
+                <View style={s.rowIconBox}><Icon name="link-variant" size={20} color={c.ink} /></View>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ color: c.ink, fontSize: 15, fontWeight: "700" }}>Pair directly (optional)</Text>
+                  <Text style={[s.small, { color: c.muted, marginTop: 0 }]}>Faster, and allows voice clips. Phones must be close and confirm a code.</Text>
+                </View>
+                <Icon name={pairOpen ? "chevron-up" : "chevron-down"} size={22} color={c.muted} />
+              </Pressable>
+              {pairOpen && (
+              <>
               <View
                 style={[
                   s.connectionBanner,
@@ -2881,22 +3268,22 @@ export default function App() {
                     {
                       backgroundColor:
                         connected
-                          ? "#2BAA72"
+                          ? P.green
                           : busyLink
-                            ? "#E0A030"
+                            ? P.sand
                             : connectionState === "failed"
-                            ? "#D35D5D"
-                            : "#2D8DD0",
+                            ? P.red
+                            : P.greenDark,
                     },
                   ]}
                 >
                   {busyLink ? (
-                    <ActivityIndicator color="#FFF" />
+                    <ActivityIndicator color={P.cream} />
                   ) : (
                   <Icon
                     name={connected || connectionState === "connected" ? "check" : connectionState === "failed" ? "alert" : connectionState === "hosting" ? "access-point" : connectionState === "joining" || connectionState === "pairing" ? "link-variant" : "cellphone"}
                     size={20}
-                    color="#FFF"
+                    color={P.cream}
                   />
                   )}
                 </View>
@@ -2927,7 +3314,7 @@ export default function App() {
               </View>
               {connected ? (
                 <View style={[s.steps, { backgroundColor: c.card, borderColor: c.line, alignItems: "center", paddingVertical: 20 }]}>
-                  <Icon name="handshake-outline" size={36} color="#2BAA72" />
+                  <Icon name="handshake-outline" size={36} color={P.green} />
                   <NativeText style={{ color: c.ink, fontSize: 20, fontWeight: "800" }}>{peerName}</NativeText>
                   <Text style={{ color: c.muted }}>
                     {linkTransport === "wifi" ? "Talk2 · Wi-Fi Direct" : "Talk2 · Bluetooth"}
@@ -2935,14 +3322,14 @@ export default function App() {
                   <Text style={[s.small, { color: c.muted, textAlign: "center" }]}>
                     If the link drops, Talk2 reconnects automatically.
                   </Text>
-                  <Pressable accessibilityRole="button" onPress={disconnect} style={[s.hostButton, { borderColor: "#D35D5D", alignSelf: "stretch" }]}>
-                    <Text style={{ color: "#D35D5D", fontWeight: "800" }}>Disconnect</Text>
+                  <Pressable accessibilityRole="button" onPress={disconnect} style={[s.hostButton, { borderColor: P.red, alignSelf: "stretch" }]}>
+                    <Text style={{ color: P.red, fontWeight: "800" }}>Disconnect</Text>
                   </Pressable>
                 </View>
               ) : (
               <>
               {connectionState === "failed" && (
-                <Pressable accessibilityRole="button" onPress={findPhones} style={[s.hint, { borderColor: "#D35D5D", marginBottom: 8 }]}>
+                <Pressable accessibilityRole="button" onPress={findPhones} style={[s.hint, { borderColor: P.red, marginBottom: 8 }]}>
                   <View style={[s.packLine, { marginTop: 0 }]}><Icon name="refresh" size={18} color={c.ink} /><Text style={{ color: c.ink, fontWeight: "700" }}>Try again</Text></View>
                 </Pressable>
               )}
@@ -2965,8 +3352,8 @@ export default function App() {
                 onPress={findPhones}
                 style={[s.bigAction, { opacity: connectionState === "scanning" ? 0.6 : 1 }]}
               >
-                <Icon name="magnify" size={24} color="#FFF" />
-                <Text style={{ color: "#FFF", fontWeight: "800", fontSize: 16 }}>
+                <Icon name="magnify" size={24} color={P.cream} />
+                <Text style={{ color: P.cream, fontWeight: "800", fontSize: 16 }}>
                   {connectionState === "scanning" ? "Scanning…" : "Find phones"}
                 </Text>
               </Pressable>
@@ -3004,14 +3391,14 @@ export default function App() {
                       key={p.transport + p.id}
                       style={[s.peerRow, { backgroundColor: c.card, borderColor: c.line }]}
                     >
-                      <View style={[s.peerIcon, { backgroundColor: p.transport === "wifi" ? "#E8F3EC" : "#E3F0FB" }]}>
-                        <Icon name={p.transport === "wifi" ? "wifi" : "bluetooth"} size={20} color="#1769AA" />
+                      <View style={[s.peerIcon, { backgroundColor: p.transport === "wifi" ? P.tint : P.tint }]}>
+                        <Icon name={p.transport === "wifi" ? "wifi" : "bluetooth"} size={20} color={P.green} />
                       </View>
                       <View style={{ flex: 1 }}>
                         <NativeText style={{ color: c.ink, fontWeight: "700", fontSize: 15 }} numberOfLines={1}>
                           {p.name}
                         </NativeText>
-                        <Text style={[s.small, { color: p.verified ? "#2BAA72" : c.muted, marginTop: 0 }]}>
+                        <Text style={[s.small, { color: p.verified ? P.green : c.muted, marginTop: 0 }]}>
                           {p.verified
                             ? p.transport === "wifi" ? "Talk2 · Wi-Fi Direct" : "Talk2 · Bluetooth"
                             : "Nearby phone · Bluetooth"}
@@ -3032,11 +3419,11 @@ export default function App() {
                       >
                         {joiningId === p.transport + p.id ? (
                           <View style={s.packLine}>
-                            <ActivityIndicator color="#FFF" size="small" />
-                            <Text style={{ color: "#FFF", fontWeight: "700" }}>Connecting…</Text>
+                            <ActivityIndicator color={P.cream} size="small" />
+                            <Text style={{ color: P.cream, fontWeight: "700" }}>Connecting…</Text>
                           </View>
                         ) : (
-                          <Text style={{ color: "#FFF", fontWeight: "700" }}>Connect</Text>
+                          <Text style={{ color: P.cream, fontWeight: "700" }}>Pair</Text>
                         )}
                       </Pressable>
                     </View>
@@ -3044,7 +3431,8 @@ export default function App() {
               )}
               </>
               )}
-              {peopleList()}
+              </>
+              )}
             </ScrollView>
           </View>
         </View>
@@ -3057,7 +3445,7 @@ export default function App() {
               style={{
                 fontSize: 42,
                 letterSpacing: 7,
-                color: "#2D8DD0",
+                color: P.greenDark,
                 textAlign: "center",
                 marginVertical: 20,
               }}
@@ -3066,8 +3454,8 @@ export default function App() {
             </NativeText>
             {pairConfirmed ? (
               <View style={[s.packLine, { justifyContent: "center", marginBottom: 10 }]}>
-                <Icon name="check-circle" size={18} color="#2BAA72" />
-                <Text style={{ color: "#2BAA72", fontWeight: "700", flexShrink: 1 }}>Confirmed here. Waiting for the other phone to tap Codes match…</Text>
+                <Icon name="check-circle" size={18} color={P.green} />
+                <Text style={{ color: P.green, fontWeight: "700", flexShrink: 1 }}>Confirmed here. Waiting for the other phone to tap Codes match…</Text>
               </View>
             ) : (
               button("Codes match", () =>
@@ -3090,7 +3478,7 @@ export default function App() {
       >
         <View style={s.overlay}>
           <View style={[s.sheet, { backgroundColor: c.bg }]}>
-            <View style={{ alignItems: "center" }}><Icon name="microphone-message" size={44} color="#1769AA" /></View>
+            <View style={{ alignItems: "center" }}><Icon name="microphone-message" size={44} color={P.green} /></View>
             {title("Speech pack needed")}
             <NativeText style={{ color: c.ink, fontSize: 18, fontWeight: "700" }}>
               {langOf(packPrompt)?.native} · {langOf(packPrompt)?.name}
@@ -3111,6 +3499,7 @@ export default function App() {
         </View>
       </Modal>
       {pickerSheet()}
+      {sosSheet()}
     </SafeAreaView>
   );
 }
@@ -3188,7 +3577,7 @@ const s = StyleSheet.create({
     width: 84,
     height: 84,
     borderRadius: 42,
-    backgroundColor: "#E3F0FB",
+    backgroundColor: P.tint,
     alignItems: "center",
     justifyContent: "center",
     alignSelf: "center",
@@ -3251,6 +3640,22 @@ const s = StyleSheet.create({
     paddingVertical: 6,
   },
   netDot: { width: 10, height: 10, borderRadius: 5 },
+  chatBar: { flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: 14, paddingVertical: 10, borderBottomWidth: 1 },
+  peopleButton: { flexDirection: "row", alignItems: "center", gap: 6, borderWidth: 1.5, borderRadius: 18, paddingHorizontal: 12, paddingVertical: 7 },
+  // Bubbles get a definite width (full row minus a side margin): shrink-to-fit containers make
+  // Android lay out Devanagari text one line short and clip it.
+  bubble: { borderWidth: 1, borderRadius: 16, paddingHorizontal: 12, paddingVertical: 8, marginBottom: 8 },
+  bubbleOut: { marginLeft: "12%", borderBottomRightRadius: 4 },
+  bubbleIn: { marginRight: "12%", borderBottomLeftRadius: 4 },
+  composer: { borderTopWidth: 1, paddingHorizontal: 10, paddingTop: 8, paddingBottom: 8 },
+  composerRow: { flexDirection: "row", alignItems: "flex-end", gap: 8 },
+  composerInput: { flex: 1, minHeight: 44, maxHeight: 110, borderWidth: 1, borderRadius: 22, paddingHorizontal: 14, paddingVertical: 10, fontSize: 16 },
+  roundButton: { width: 52, height: 52, borderRadius: 26, alignItems: "center", justifyContent: "center" },
+  chipSmall: { borderWidth: 1, borderRadius: 14, paddingHorizontal: 10, paddingVertical: 5 },
+  sosCard: { backgroundColor: P.red, borderRadius: 16, padding: 14, marginBottom: 10 },
+  sosHeader: { flexDirection: "row", alignItems: "center", gap: 12, borderRadius: 16, padding: 14 },
+  sosIntro: { flexDirection: "row", alignItems: "center", gap: 10, borderWidth: 1.5, borderRadius: 16, padding: 12, marginBottom: 6 },
+  sosOption: { flexDirection: "row", alignItems: "center", gap: 12, borderWidth: 1.5, borderRadius: 16, padding: 14, marginBottom: 10 },
   statusBanner: {
     flexDirection: "row",
     alignItems: "center",
@@ -3264,7 +3669,7 @@ const s = StyleSheet.create({
   small: { fontSize: 12, lineHeight: 17, marginTop: 4 },
   packLine: { flexDirection: "row", alignItems: "center", gap: 12, marginTop: 4 },
   bar: { height: 6, borderRadius: 3, overflow: "hidden" },
-  barFill: { height: 6, borderRadius: 3, backgroundColor: "#2D8DD0" },
+  barFill: { height: 6, borderRadius: 3, backgroundColor: P.greenDark },
   downloadButton: {
     borderWidth: 1.5,
     borderRadius: 12,
@@ -3292,7 +3697,7 @@ const s = StyleSheet.create({
     paddingHorizontal: 4,
     justifyContent: "center",
   },
-  segmentActive: { backgroundColor: "#1769AA", borderColor: "#1769AA" },
+  segmentActive: { backgroundColor: P.green, borderColor: P.green },
   pickRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -3314,7 +3719,7 @@ const s = StyleSheet.create({
     width: 60,
     height: 60,
     borderRadius: 30,
-    backgroundColor: "#E3F0FB",
+    backgroundColor: P.tint,
     alignItems: "center",
     justifyContent: "center",
   },
@@ -3354,8 +3759,8 @@ const s = StyleSheet.create({
     width: 22,
     height: 22,
     borderRadius: 11,
-    backgroundColor: "#2D8DD0",
-    color: "#FFF",
+    backgroundColor: P.greenDark,
+    color: P.cream,
     textAlign: "center",
     fontWeight: "800",
     fontSize: 12,
@@ -3366,7 +3771,7 @@ const s = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     gap: 10,
-    backgroundColor: "#1769AA",
+    backgroundColor: P.green,
     borderRadius: 16,
     paddingVertical: 15,
     marginTop: 12,
@@ -3399,13 +3804,13 @@ const s = StyleSheet.create({
     justifyContent: "center",
   },
   joinButton: {
-    backgroundColor: "#2BAA72",
+    backgroundColor: P.green,
     borderRadius: 12,
     paddingVertical: 9,
     paddingHorizontal: 14,
   },
   error: {
-    backgroundColor: "#FFE5D7",
+    backgroundColor: P.redTint,
     marginHorizontal: 16,
     padding: 12,
     borderRadius: 12,

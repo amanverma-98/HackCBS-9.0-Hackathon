@@ -275,6 +275,46 @@
           "url": "https://github.com/Somu9450/Talk2/releases/download/model-pack-v1/indictrans2-vocab.json"
         }
       ]
+    },
+    "translation-en": {
+      "files": [
+        {
+          "name": "indictrans2-en-indic-encoder-int8.onnx",
+          "bytes": 124579264,
+          "sha256": "9a1fe4e4458136407a94d1551ae633e13996d22d55e8e16dbb4ef9a38962d706",
+          "url": "https://github.com/Somu9450/Talk2/releases/download/model-pack-v1/indictrans2-en-indic-encoder-int8.onnx"
+        },
+        {
+          "name": "indictrans2-en-indic-decoder-int8.onnx",
+          "bytes": 392372133,
+          "sha256": "ca4bb98f649ac2d72c68974dddeb41a35ec5a735bbed1b7669da46fedc5e76d3",
+          "url": "https://github.com/Somu9450/Talk2/releases/download/model-pack-v1/indictrans2-en-indic-decoder-int8.onnx"
+        },
+        {
+          "name": "indictrans2-en-indic-vocab.json",
+          "bytes": 4354710,
+          "sha256": "1c8ca7be64146e35cfd09e315543c38ea868f94e08085c69e07f3270e206f8f0",
+          "url": "https://github.com/Somu9450/Talk2/releases/download/model-pack-v1/indictrans2-en-indic-vocab.json"
+        },
+        {
+          "name": "indictrans2-indic-en-encoder-int8.onnx",
+          "bytes": 309685711,
+          "sha256": "24473c15fe8445d34176375adee1df9f7fc069fffada1ba4eda1da0ed9313e61",
+          "url": "https://github.com/Somu9450/Talk2/releases/download/model-pack-v1/indictrans2-indic-en-encoder-int8.onnx"
+        },
+        {
+          "name": "indictrans2-indic-en-decoder-int8.onnx",
+          "bytes": 161009568,
+          "sha256": "87c2a9fb551c62cdf5f7580ab7849d54ea2ead5df6145c8b996b892f913ba164",
+          "url": "https://github.com/Somu9450/Talk2/releases/download/model-pack-v1/indictrans2-indic-en-decoder-int8.onnx"
+        },
+        {
+          "name": "indictrans2-indic-en-vocab.json",
+          "bytes": 9170191,
+          "sha256": "a1823b3aaac710ef329ad74bfdcdbb8f45c91ff59fab5a93bf02446506ab8d32",
+          "url": "https://github.com/Somu9450/Talk2/releases/download/model-pack-v1/indictrans2-indic-en-vocab.json"
+        }
+      ]
     }
   }
 }

@@ -1,0 +1,23 @@
+# Render Blueprint for the Talk2 accounts API (backend/).
+# Render dashboard -> New -> Blueprint -> pick this repository. It asks for MONGODB_URI
+# (a MongoDB Atlas connection string) and generates JWT_SECRET. The app calls the address in
+# mobile/src/config.ts (currently https://hackcbs-9-0-hackathon-3.onrender.com); if the service
+# moves, change it there and rebuild the app.
+services:
+  - type: web
+    name: talk2-backend
+    runtime: node
+    rootDir: backend
+    plan: free
+    buildCommand: npm ci --omit=dev
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      - key: MONGODB_URI
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: JWT_EXPIRES_IN
+        value: 3650d

@@ -51,6 +51,14 @@ const translation = [
 ];
 if (translation.every((n) => available.includes(n)))
   packs.translation = { files: await Promise.all(translation.map(asset)) };
+// Optional English <-> Indian languages pack (IndicTrans2 en-indic + indic-en).
+const translationEn = ["en-indic", "indic-en"].flatMap((d) => [
+  `indictrans2-${d}-encoder-int8.onnx`,
+  `indictrans2-${d}-decoder-int8.onnx`,
+  `indictrans2-${d}-vocab.json`,
+]);
+if (translationEn.every((n) => available.includes(n)))
+  packs["translation-en"] = { files: await Promise.all(translationEn.map(asset)) };
 if (!Object.keys(packs).length) throw new Error("No complete packs");
 await writeFile(
   out,

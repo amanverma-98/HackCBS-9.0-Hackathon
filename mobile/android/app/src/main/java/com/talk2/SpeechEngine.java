@@ -56,7 +56,15 @@ public final class SpeechEngine {
    return out.toString().trim().replaceAll("\\s+"," ");
   }
  }
- synchronized void speak(String text,String lang)throws Exception{
+ /** Set from any thread to pause playback; the playback loop checks it between chunks. */
+ final java.util.concurrent.atomic.AtomicBoolean stopPlayback=new java.util.concurrent.atomic.AtomicBoolean();
+ private String lastKey;private short[] lastAudio;
+ /** Speaks text from startSample and returns the sample reached; the last synthesis is reused so resuming is instant. */
+ synchronized int speak(String text,String lang,int startSample)throws Exception{
+  String key=lang+"|"+text;short[] audio=key.equals(lastKey)?lastAudio:synthesize(text,lang);lastKey=key;lastAudio=audio;
+  return play(audio,Math.max(0,Math.min(startSample,audio.length)),stopPlayback);
+ }
+ private short[] synthesize(String text,String lang)throws Exception{
   boolean builtIn=voices.has(lang);
   if(!builtIn&&!store.readyCached(lang))throw new IOException("Install "+lang+" speech pack first");
   JSONObject v=new JSONObject(builtIn?voices.vocab(lang):ModelStore.read(store.file(lang,"vits-"+lang+"-vocab.json")));boolean inter=v.optBoolean("interleave_pad",true);long pad=v.optLong("pad_id",0);List<Long> ids=new ArrayList<>();if(inter)ids.add(pad);int unknown=0,mapped=0;
@@ -70,10 +78,18 @@ public final class SpeechEngine {
    if(s.getInputNames().size()!=1)throw new IOException("Expected MMS-VITS single-input export");
    try(OrtSession.Result result=s.run(Collections.singletonMap(s.getInputNames().iterator().next(),input))){
     FloatBuffer data=((OnnxTensor)result.get(0)).getFloatBuffer();short[] audio=new short[data.remaining()];for(int i=0;i<audio.length;i++)audio[i]=(short)Math.max(-32767,Math.min(32767,data.get()*32767));
-    int min=AudioTrack.getMinBufferSize(16000,AudioFormat.CHANNEL_OUT_MONO,AudioFormat.ENCODING_PCM_16BIT);AudioTrack track=new AudioTrack(AudioManager.STREAM_MUSIC,16000,AudioFormat.CHANNEL_OUT_MONO,AudioFormat.ENCODING_PCM_16BIT,Math.max(min,8192),AudioTrack.MODE_STREAM);
-    try{track.play();int p=0;while(p<audio.length){int k=track.write(audio,p,Math.min(4096,audio.length-p));if(k<=0)throw new IOException("Speaker failure "+k);p+=k;}long deadline=System.currentTimeMillis()+audio.length/16+2000;while(track.getPlaybackHeadPosition()<audio.length&&System.currentTimeMillis()<deadline)Thread.sleep(20);}finally{track.stop();track.release();}
+    return audio;
    }
   }
+ }
+ /** Streams 16 kHz mono PCM from start; stops early when stop is set and returns the sample reached. */
+ static int play(short[] audio,int start,java.util.concurrent.atomic.AtomicBoolean stop)throws Exception{
+  stop.set(false);int min=AudioTrack.getMinBufferSize(16000,AudioFormat.CHANNEL_OUT_MONO,AudioFormat.ENCODING_PCM_16BIT);
+  AudioTrack track=new AudioTrack(AudioManager.STREAM_MUSIC,16000,AudioFormat.CHANNEL_OUT_MONO,AudioFormat.ENCODING_PCM_16BIT,Math.max(min,8192),AudioTrack.MODE_STREAM);
+  try{track.play();int p=start;while(p<audio.length&&!stop.get()){int k=track.write(audio,p,Math.min(4096,audio.length-p));if(k<=0)throw new IOException("Speaker failure "+k);p+=k;}
+   long deadline=System.currentTimeMillis()+(audio.length-start)/16+2000;while(!stop.get()&&track.getPlaybackHeadPosition()<p-start&&System.currentTimeMillis()<deadline)Thread.sleep(20);
+   return stop.get()?Math.min(audio.length,start+track.getPlaybackHeadPosition()):audio.length;
+  }finally{track.stop();track.release();}
  }
  void close(){if(mic!=null)try{stop();}catch(Exception ignored){}}
 }
