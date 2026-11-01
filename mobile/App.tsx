@@ -453,6 +453,7 @@ export default function App() {
         await Native.playVoice(m.audioUri);
         return;
       }
+
       const source = m.kind === "voice" ? m.transcript || "" : m.text;
       let spoken = m.template ? phrase(m.template, target) : undefined;
       if (!spoken)
@@ -469,6 +470,7 @@ export default function App() {
     }
   }
 
+
   /** Translates an incoming message into this phone's language and stores the result. */
   async function translateIncoming(m: Message): Promise<Message> {
     const target = ref.current.targetTranslation;
@@ -483,6 +485,7 @@ export default function App() {
       return m;
     }
   }
+
   async function deliver(incoming: Message) {
     await add(incoming);
     feedback("message");
@@ -493,11 +496,15 @@ export default function App() {
           ? phrase(incoming.template, ref.current.targetTranslation) || incoming.text
           : incoming.text,
       );
+
+
     const ready = await translateIncoming(incoming);
     // Auto-play is best effort; the message's Play button reports why speech failed.
     if (!incoming.queued && ref.current.autoPlay && !ptt.current?.active)
       await play(ready).catch(() => (ready.audioUri ? play(ready, true).catch(() => { }) : undefined));
   }
+
+  
   async function receive(m: any) {
     if (!validMessage(m)) return;
     if (m.kind === "ack") {
