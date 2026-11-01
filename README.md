@@ -3,15 +3,7 @@
 <!-- ───────────────────────────────────────────────── -->
 
 <p align="center">
-  <a href="https://hackcbs.tech/#about">
-    <img src="./docs/images/hackcbs-logo.png" alt="hackCBS 9.0" width="130">
-  </a>
-</p>
-
-<p align="center">
-  <img src="https://img.shields.io/badge/HackCBS-9.0-ff6b35?style=for-the-badge&labelColor=1a1a2e" alt="HackCBS 9.0">
-  <img src="https://img.shields.io/badge/31%20October–1%20November-2026-4cc9f0?style=for-the-badge&labelColor=1a1a2e" alt="31 Oct- 1 Nov 2026">
-  <img src="https://img.shields.io/badge/India's%20Largest-Student%20Hackathon-f72585?style=for-the-badge&labelColor=1a1a2e" alt="Student Hackathon">
+  <img src="./docs/images/talk2-logo.jpg" alt="Talk2 Logo" width="120" style="border-radius: 24px;">
 </p>
 
 <h1 align="center">🗣️ Talk2</h1>
@@ -22,6 +14,18 @@
 
 <p align="center">
   Offline peer-to-peer communication, BLE mesh relay, multilingual speech, and emergency SOS.
+</p>
+
+<p align="center">
+  <a href="https://hackcbs.tech/#about">
+    <img src="./docs/images/hackcbs-logo.png" alt="hackCBS 9.0" width="110">
+  </a>
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/HackCBS-9.0-ff6b35?style=for-the-badge&labelColor=1a1a2e" alt="HackCBS 9.0">
+  <img src="https://img.shields.io/badge/31%20October–1%20November-2026-4cc9f0?style=for-the-badge&labelColor=1a1a2e" alt="31 Oct- 1 Nov 2026">
+  <img src="https://img.shields.io/badge/India's%20Largest-Student%20Hackathon-f72585?style=for-the-badge&labelColor=1a1a2e" alt="Student Hackathon">
 </p>
 
 <p align="center">
@@ -276,20 +280,20 @@ speech, GPS radar, emergency alerts, and model management in a single offline-fi
 <table>
   <tr>
     <td align="center">
-      <img src="./docs/screenshots/chat.png" alt="Chat & Voice" width="180">
-      <br><sub><b>Talk</b><br>Encrypted chat & PTT voice</sub>
+      <img src="./docs/screenshots/talk-chat.jpg" alt="Talk & Speech Translation" width="180">
+      <br><sub><b>Talk & Speech</b><br>Chat, PTT voice & on-device translation</sub>
     </td>
     <td align="center">
-      <img src="./docs/screenshots/radar.png" alt="GPS Radar" width="180">
-      <br><sub><b>Radar</b><br>GPS bearing & mesh peers</sub>
+      <img src="./docs/screenshots/radar-mesh.jpg" alt="GPS Radar & BLE Mesh" width="180">
+      <br><sub><b>Radar & Mesh</b><br>Compass bearing, distance & BLE peers</sub>
     </td>
     <td align="center">
-      <img src="./docs/screenshots/alert.png" alt="Emergency Alert" width="180">
-      <br><sub><b>Alert</b><br>SOS broadcast & presets</sub>
+      <img src="./docs/screenshots/emergency-alerts.jpg" alt="Emergency SOS Presets" width="180">
+      <br><sub><b>Emergency Alerts</b><br>10-language presets & voice SOS</sub>
     </td>
     <td align="center">
-      <img src="./docs/screenshots/settings.png" alt="Settings & Models" width="180">
-      <br><sub><b>Settings</b><br>Languages & offline models</sub>
+      <img src="./docs/screenshots/sos-detail.jpg" alt="Live SOS Alert Modal" width="180">
+      <br><sub><b>Live SOS Dispatch</b><br>Real-time GPS, azimuth & relay path</sub>
     </td>
   </tr>
 </table>
