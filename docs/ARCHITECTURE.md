@@ -15,7 +15,7 @@ separate values. Small English/Marathi UI resources ship in the application bund
 missing keys use structured English fallback and are counted in the UI coverage
 diagnostic. Speech/translation ONNX assets remain optional, checksum-verified
 downloads. Model status distinguishes release availability, installed verification
-and partial transfer bytes.
+and partial transfer bytes
 
 ## Speech and voice
 
