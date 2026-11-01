@@ -17,12 +17,14 @@ test("ten unique languages and original wire codes", () => {
     ["hi", "ta", "bn"],
   );
 });
+
 test("GPS distance, heading-relative bearing and antimeridian", () => {
   let p = position(
     { latitude: 0, longitude: 0 },
     { latitude: 0, longitude: 0.001 },
     90,
   );
+  
   assert.ok(Math.abs(p.distance - 111.195) < 0.01);
   assert.equal(p.bearing, 90);
   assert.equal(p.relative, 0);
