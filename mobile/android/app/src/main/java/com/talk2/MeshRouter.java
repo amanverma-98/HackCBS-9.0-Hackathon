@@ -16,6 +16,18 @@ final class MeshRouter {
  interface Extension { boolean accept(MeshPacket p,String ingress)throws Exception; void tick()throws Exception; void custody(String body)throws Exception; default void started(String body)throws Exception{} }
  Extension extension;
  private final Map<String,String> ingress=new HashMap<>();
+ /** id@neighbor pairs that already took custody of a retained broadcast. */
+ private final Set<String> delivered=new HashSet<>();
+ /**
+  * Broadcasts other than voice stay queued after the first custody so phones that connect later
+  * (or relays' other neighbours) still receive them while valid: SOS and text for 2 minutes,
+  * location and presence until they expire or 30 s.
+  */
+ private static boolean retained(MeshPacket p){String t=p.type();return p.destination().equals("*")&&!t.equals("voice")&&!t.equals("ack")&&!t.equals("custody");}
+ private static long keepUntil(MeshPacket p){long created=p.json.optLong("created");return Math.min(p.json.optLong("expires"),created+(p.type().equals("sos")||p.type().equals("text")?120000:30000));}
+ /** Frees queue space by dropping the oldest retained broadcast that some neighbour already holds. */
+ private boolean evictDelivered(){for(String id:new ArrayList<>(queue.keySet())){for(String k:delivered)if(k.startsWith(id+"@")){queue.remove(id);forget(id);return true;}}return false;}
+ synchronized List<String> neighbors(){return new ArrayList<>(neighbors);}
  interface Sender { void send(String neighbor,String packet)throws Exception; }
  static final int MAX_NEIGHBORS=3,MAX_QUEUE=16,MAX_SEEN=256;
  private final Events events;private final Sender sender;private final LinkedHashMap<String,Long> seen=new LinkedHashMap<>();private final LinkedHashMap<String,String> queue=new LinkedHashMap<>(),awaitingReceipt=new LinkedHashMap<>(),inbox=new LinkedHashMap<>();private final LinkedHashMap<String,Long> sentAt=new LinkedHashMap<>();private final LinkedHashSet<String> neighbors=new LinkedHashSet<>();private final KeyPair identity;private final String nodeId;private final AtomicFile store;private final ScheduledExecutorService retry=Executors.newSingleThreadScheduledExecutor();
@@ -23,13 +35,18 @@ final class MeshRouter {
  MeshRouter(File file,KeyPair key,Events e,Sender s,boolean schedule)throws Exception{events=e;sender=s;store=new AtomicFile(file);identity=key;nodeId=UUID.nameUUIDFromBytes(identity.getPublic().getEncoded()).toString();load();if(schedule)retry.scheduleAtFixedRate(this::retryPending,1,1,TimeUnit.SECONDS);}
  synchronized String nodeId(){return nodeId;}
  private static KeyPair loadIdentity()throws Exception{String alias="talk2.mesh.identity.v1";KeyStore ks=KeyStore.getInstance("AndroidKeyStore");ks.load(null);if(!ks.containsAlias(alias)){KeyPairGenerator g=KeyPairGenerator.getInstance(KeyProperties.KEY_ALGORITHM_EC,"AndroidKeyStore");g.initialize(new KeyGenParameterSpec.Builder(alias,KeyProperties.PURPOSE_SIGN|KeyProperties.PURPOSE_VERIFY).setAlgorithmParameterSpec(new ECGenParameterSpec("secp256r1")).setDigests(KeyProperties.DIGEST_SHA256).build());g.generateKeyPair();}return new KeyPair(ks.getCertificate(alias).getPublicKey(),(PrivateKey)ks.getKey(alias,null));}
- synchronized void neighbor(String id,boolean connected){if(connected){if(neighbors.contains(id)||neighbors.size()<MAX_NEIGHBORS){neighbors.add(id);drain(id);}}else neighbors.remove(id);events.event("meshNeighbor",obj("id",id,"connected",connected));}
- synchronized String send(String type,String destination,String body)throws Exception{expire();if(awaitingReceipt.size()>=MAX_QUEUE&&!destination.equals("*"))throw new IOException("Pending receipt queue full");MeshPacket p=MeshPacket.create(type,nodeId,destination,body,type.equals("sos")?3:1,identity);if(type.equals("sos")&&queue.size()>=MAX_QUEUE)evictVoice();if(queue.size()>=MAX_QUEUE)throw new IOException("Mesh queue full; send later");queue.put(p.id(),p.wire());if(type.equals("text")&&!destination.equals("*"))awaitingReceipt.put(p.id(),p.wire());persist();events.event("meshStatus",obj("id",p.id(),"status","queued"));for(String n:neighbors)drain(n);return p.id();}
+ synchronized void neighbor(String id,boolean connected){if(connected){if(neighbors.contains(id)||neighbors.size()<MAX_NEIGHBORS){neighbors.add(id);
+  // A (re)connected neighbour gets everything it has not taken custody of now, not after the resend timer.
+  sentAt.keySet().removeIf(key->key.endsWith("@"+id));drain(id);}}else neighbors.remove(id);events.event("meshNeighbor",obj("id",id,"connected",connected));}
+ synchronized String send(String type,String destination,String body)throws Exception{expire();if(awaitingReceipt.size()>=MAX_QUEUE&&!destination.equals("*"))throw new IOException("Pending receipt queue full");MeshPacket p=MeshPacket.create(type,nodeId,destination,body,type.equals("sos")?3:1,identity);if(type.equals("sos")&&queue.size()>=MAX_QUEUE)evictVoice();if(queue.size()>=MAX_QUEUE)evictDelivered();if(queue.size()>=MAX_QUEUE)throw new IOException("Mesh queue full; send later");remember(p.id());queue.put(p.id(),p.wire());if(type.equals("text")&&!destination.equals("*"))awaitingReceipt.put(p.id(),p.wire());persist();events.event("meshStatus",obj("id",p.id(),"status","queued"));for(String n:neighbors)drain(n);return p.id();}
  synchronized boolean sendExtension(String type,String destination,String body,int priority)throws Exception {
   long bulk=0;for(String wire:queue.values())try{MeshPacket p=MeshPacket.parse(wire);if(p.type().equals("voice")&&p.priority()==0)bulk++;}catch(Exception ignored){}
   if(priority==0&&(queue.size()>=MAX_QUEUE-4||bulk>=4))return false;
-  if(priority>=3&&queue.size()>=MAX_QUEUE)evictVoice();if(queue.size()>=MAX_QUEUE)return false;
-  MeshPacket p=MeshPacket.create(type,nodeId,destination,body,priority,identity);queue.put(p.id(),p.wire());persist();for(String n:neighbors)drain(n);return true;
+  if(priority>=3&&queue.size()>=MAX_QUEUE)evictVoice();if(queue.size()>=MAX_QUEUE)evictDelivered();if(queue.size()>=MAX_QUEUE)return false;
+  // A newer own location supersedes older queued ones, so late joiners get only the latest.
+  if(type.equals("position"))for(Map.Entry<String,String> x:new ArrayList<>(queue.entrySet()))try{MeshPacket old=MeshPacket.parse(x.getValue());if(old.type().equals("position")&&old.sender().equals(nodeId)){queue.remove(x.getKey());forget(x.getKey());}}catch(Exception ignored){}
+  // Own packets count as seen so a relay echoing them back is not flooded again.
+  MeshPacket p=MeshPacket.create(type,nodeId,destination,body,priority,identity);remember(p.id());queue.put(p.id(),p.wire());persist();for(String n:neighbors)drain(n);return true;
  }
  synchronized boolean relayVoice(String wire,String from)throws Exception {
   MeshPacket p=MeshPacket.parse(wire);if(queue.containsKey(p.id()))return true;if(queue.size()>=MAX_QUEUE-4)return false;
@@ -41,6 +58,8 @@ final class MeshRouter {
   MeshPacket p=MeshPacket.parse(wire);boolean addressed=p.destination().equals(nodeId)||p.destination().equals("*");
   if(p.type().equals("custody")){
    String held=p.body();if(!p.destination().equals(nodeId)||!sentAt.containsKey(held+"@"+neighbor))return;
+   String queued=queue.get(held);boolean keep=false;if(queued!=null)try{keep=retained(MeshPacket.parse(queued));}catch(Exception expired){}
+   if(keep){delivered.add(held+"@"+neighbor);events.event("meshStatus",obj("id",held,"status","custody","neighbor",neighbor));return;}
    String removed=queue.remove(held);forget(held);persist();if(removed!=null&&extension!=null){MeshPacket original=MeshPacket.parse(removed);if(original.type().equals("voice"))extension.custody(original.body());}
    events.event("meshStatus",obj("id",held,"status","custody","neighbor",neighbor));return;
   }
@@ -51,25 +70,26 @@ final class MeshRouter {
   boolean extended=p.type().equals("voice")||p.type().equals("position")||p.type().equals("presence");
   boolean spooledVoice=addressed&&p.type().equals("voice")&&Arrays.asList("meta","chunk").contains(new JSONObject(p.body()).optString("op"));
   boolean duplicate=seen.containsKey(p.id());boolean mustForward=!spooledVoice&&(!addressed||p.destination().equals("*"))&&p.json.getInt("hops")<p.json.getInt("ttl");
-  if(!duplicate&&mustForward&&queue.size()>=MAX_QUEUE){if(p.type().equals("sos"))evictVoice();if(queue.size()>=MAX_QUEUE)return;}
-  if(addressed&&extended&&(extension==null||!extension.accept(p,neighbor)))return;
+  if(!duplicate&&mustForward&&queue.size()>=MAX_QUEUE){if(p.type().equals("sos"))evictVoice();if(queue.size()>=MAX_QUEUE)evictDelivered();if(queue.size()>=MAX_QUEUE)return;}
+  // Duplicate copies of position/presence are not re-delivered to the app; voice handles its own duplicates.
+  if(addressed&&extended&&!(duplicate&&!p.type().equals("voice"))&&(extension==null||!extension.accept(p,neighbor)))return;
   if(!duplicate){if(addressed&&!extended&&inbox.size()>=MAX_QUEUE)return;
    if(addressed&&!extended)inbox.put(p.id(),p.wire());if(mustForward){MeshPacket f=p.forwarded(nodeId);queue.put(f.id(),f.wire());ingress.put(f.id(),neighbor);}remember(p.id());persist();}
-  if(duplicate&&addressed&&!extended&&!inbox.containsKey(p.id())){if(inbox.size()>=MAX_QUEUE)return;inbox.put(p.id(),p.wire());persist();}
+  boolean reinboxed=false;if(duplicate&&addressed&&!extended&&!inbox.containsKey(p.id())){if(inbox.size()>=MAX_QUEUE)return;inbox.put(p.id(),p.wire());persist();reinboxed=true;}
   MeshPacket custody=MeshPacket.create("custody",nodeId,p.lastHop(),p.id(),3,identity);
   try{sender.send(neighbor,custody.wire());}catch(Exception unavailable){/* sender retries until custody/expiry */}
-  if(addressed&&!extended)events.event(p.type().equals("sos")?"meshSOS":"meshMessage",new JSONObject(p.json.toString()).put("status","received at destination"));
+  if(addressed&&!extended&&(!duplicate||reinboxed))events.event(p.type().equals("sos")?"meshSOS":"meshMessage",new JSONObject(p.json.toString()).put("status","received at destination"));
   for(String n:neighbors)if(!n.equals(neighbor))drain(n);
  }
  private void remember(String id){if(seen.size()>=MAX_SEEN)seen.remove(seen.keySet().iterator().next());seen.put(id,System.currentTimeMillis());}
- private void forward(MeshPacket p,String neighbor)throws Exception{if(p.json.optInt("hops")>=p.json.optInt("ttl"))return;MeshPacket f=p.forwarded(nodeId);if(queue.size()<MAX_QUEUE){queue.put(f.id(),f.wire());ingress.put(f.id(),neighbor);}persist();for(String n:neighbors)if(!n.equals(neighbor))drain(n);}
+ private void forward(MeshPacket p,String neighbor)throws Exception{if(p.json.optInt("hops")>=p.json.optInt("ttl"))return;MeshPacket f=p.forwarded(nodeId);if(queue.size()>=MAX_QUEUE)evictDelivered();if(queue.size()<MAX_QUEUE){queue.put(f.id(),f.wire());ingress.put(f.id(),neighbor);}persist();for(String n:neighbors)if(!n.equals(neighbor))drain(n);}
  synchronized void acknowledgeInbox(String id)throws Exception{String wire=inbox.remove(id);if(wire==null)return;MeshPacket p=MeshPacket.parse(wire);persist();if(p.type().equals("text")&&!p.destination().equals("*")){MeshPacket ack=MeshPacket.create("ack",nodeId,p.sender(),p.id(),3,identity);if(queue.size()<MAX_QUEUE){queue.put(ack.id(),ack.wire());persist();for(String n:neighbors)drain(n);}}}
  synchronized void replayInbox(){for(String wire:new ArrayList<>(inbox.values()))try{MeshPacket p=MeshPacket.parse(wire);events.event(p.type().equals("sos")?"meshSOS":"meshMessage",new JSONObject(p.json.toString()).put("status","received at destination"));}catch(Exception ignored){}}
- private void forget(String id){ingress.remove(id);sentAt.keySet().removeIf(key->key.startsWith(id+"@")||key.startsWith("origin:"+id+"@"));}
+ private void forget(String id){ingress.remove(id);delivered.removeIf(key->key.startsWith(id+"@"));sentAt.keySet().removeIf(key->key.startsWith(id+"@")||key.startsWith("origin:"+id+"@"));}
  private synchronized void retryPending(){try{expire();for(String n:new ArrayList<>(neighbors))drain(n);if(extension!=null)extension.tick();}catch(Exception e){events.event("meshError",obj("message",e.getMessage(),"operation","retry"));}}
- private void expire()throws Exception{boolean changed=false;for(Map<String,String> map:Arrays.asList(queue,awaitingReceipt,inbox))for(Map.Entry<String,String> x:new ArrayList<>(map.entrySet()))try{MeshPacket.parse(x.getValue());}catch(Exception expired){map.remove(x.getKey());forget(x.getKey());changed=true;events.event("meshStatus",obj("id",x.getKey(),"status","expired"));}if(changed)persist();}
+ private void expire()throws Exception{boolean changed=false;for(Map<String,String> map:Arrays.asList(queue,awaitingReceipt,inbox))for(Map.Entry<String,String> x:new ArrayList<>(map.entrySet()))try{MeshPacket kept=MeshPacket.parse(x.getValue());if(map==queue&&retained(kept)&&System.currentTimeMillis()>keepUntil(kept)){map.remove(x.getKey());forget(x.getKey());changed=true;}}catch(Exception expired){map.remove(x.getKey());forget(x.getKey());changed=true;events.event("meshStatus",obj("id",x.getKey(),"status","expired"));}if(changed)persist();}
  synchronized void cancelVoice(String id){for(Map.Entry<String,String> x:new ArrayList<>(queue.entrySet()))try{MeshPacket p=MeshPacket.parse(x.getValue());if(p.type().equals("voice")&&p.sender().equals(nodeId)&&new JSONObject(p.body()).optString("transfer").equals(id)){queue.remove(x.getKey());forget(x.getKey());}}catch(Exception ignored){}try{persist();}catch(Exception ignored){}}
- private void drain(String neighbor){long now=System.currentTimeMillis();boolean changed=false;List<Map.Entry<String,String>> pending=new ArrayList<>(queue.entrySet());pending.sort((a,b)->Integer.compare(priority(b.getValue()),priority(a.getValue())));for(Map.Entry<String,String> x:pending){if(neighbor.equals(ingress.get(x.getKey())))continue;String key=x.getKey()+"@"+neighbor;if(now-sentAt.getOrDefault(key,0L)<15000)continue;try{sender.send(neighbor,x.getValue());sentAt.put(key,now);MeshPacket p=MeshPacket.parse(x.getValue());if(extension!=null&&p.type().equals("voice"))extension.started(p.body());if(p.type().equals("ack")||p.type().equals("custody")){queue.remove(x.getKey());forget(x.getKey());changed=true;}events.event("meshStatus",obj("id",x.getKey(),"status","sent-to-neighbor","neighbor",neighbor));}catch(Exception ignored){}}for(Map.Entry<String,String> x:awaitingReceipt.entrySet()){if(queue.containsKey(x.getKey()))continue;String key="origin:"+x.getKey()+"@"+neighbor;if(now-sentAt.getOrDefault(key,0L)<30000)continue;try{sender.send(neighbor,x.getValue());sentAt.put(key,now);}catch(Exception ignored){}}if(changed)try{persist();}catch(Exception ignored){}}
+ private void drain(String neighbor){long now=System.currentTimeMillis();boolean changed=false;List<Map.Entry<String,String>> pending=new ArrayList<>(queue.entrySet());pending.sort((a,b)->Integer.compare(priority(b.getValue()),priority(a.getValue())));for(Map.Entry<String,String> x:pending){if(neighbor.equals(ingress.get(x.getKey()))||delivered.contains(x.getKey()+"@"+neighbor))continue;String key=x.getKey()+"@"+neighbor;if(now-sentAt.getOrDefault(key,0L)<15000)continue;try{sender.send(neighbor,x.getValue());sentAt.put(key,now);MeshPacket p=MeshPacket.parse(x.getValue());if(extension!=null&&p.type().equals("voice"))extension.started(p.body());if(p.type().equals("ack")||p.type().equals("custody")){queue.remove(x.getKey());forget(x.getKey());changed=true;}events.event("meshStatus",obj("id",x.getKey(),"status","sent-to-neighbor","neighbor",neighbor));}catch(Exception ignored){}}for(Map.Entry<String,String> x:awaitingReceipt.entrySet()){if(queue.containsKey(x.getKey()))continue;String key="origin:"+x.getKey()+"@"+neighbor;if(now-sentAt.getOrDefault(key,0L)<30000)continue;try{sender.send(neighbor,x.getValue());sentAt.put(key,now);}catch(Exception ignored){}}if(changed)try{persist();}catch(Exception ignored){}}
  private int priority(String wire){try{return MeshPacket.parse(wire).priority();}catch(Exception e){return 0;}}
  synchronized void close(){retry.shutdownNow();neighbors.clear();}
  static void eraseVoice(File file)throws Exception{

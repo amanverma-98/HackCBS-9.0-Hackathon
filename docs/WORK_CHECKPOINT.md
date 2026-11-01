@@ -455,3 +455,138 @@ hash; APKs above were built from that source before commit creation. No GitHub
 push was performed for Stage 3. Final status preserves the pre-existing modified
 mobile/android/gradle/wrapper/gradle-wrapper.properties. An untracked .vscode/
 directory appeared during closeout and was also left untouched/uncommitted.
+
+## Post-Stage-3 work recorded in commits 486eeee and f4835c9 (summary)
+
+Not previously checkpointed. Direct link: insecure RFCOMM with app-level SAS, discovery
+listener on scanning phones, auto-reconnect with a resume proof
+(`SecureChannel.resumeProof`), and a BYE message on a deliberate disconnect. Mesh:
+always-on, signed `presence` packets for multi-hop discovery, and end-to-end sealed private
+mesh chat (`MeshSeal`, `MeshSealKeys`). UI: Hindi and Gujarati UI strings, a built-in Hindi
+STT model and Hindi and Gujarati TTS voices in APK assets, translation on receipt and cached
+ONNX sessions. Also added: a compact Settings screen, an onboarding permissions step, and
+the `backend/` Express accounts API.
+
+## Mesh location and reliability (2026-11-01)
+
+Input commit: f4835c9 on `main`; the working tree was clean at the start. The work below is
+**uncommitted**. Root cause: `docs/MESH_LOCATION_ROOT_CAUSE.md`.
+
+### Location fix
+- `shared/mesh-location.cjs` (new). `LocationPublisher` publishes on start, new neighbour,
+  refresh, a heartbeat every 15 s, or movement of 15 m or more, with a 3 s minimum interval.
+  `positionUpdate` and `positionOff` build the bodies.
+- `mobile/App.tsx`:
+  - One consented `shareLocation` switch (paired phone and mesh) that starts off each session.
+  - The separate `meshSharing` flag is gone, and a mesh pause no longer clears sharing.
+  - `publishLocation` runs on GPS fix, mesh start, `meshNeighbor` connect, direct
+    `connected`, a 5 s heartbeat timer and refresh.
+- `shared/location.cjs peerView` returns `located` (the peer's fix is valid) separately
+  from `polar` (which also needs this phone's own fresh fix).
+
+### Mesh reliability (Java)
+- `MeshRouter`:
+  - Non-voice broadcasts stay queued after custody: SOS and text for 120 s, position and
+    presence for 30 s or until expiry. A per-neighbour `delivered` set prevents resends.
+  - Delivered broadcasts are evicted first when the queue is full.
+  - A reconnecting neighbour's resend timers are cleared, so the queue flushes immediately.
+  - Duplicate copies do not re-fire app events.
+  - Own packets are marked seen at creation, so echoes are not re-flooded.
+  - A newer own position supersedes queued older ones.
+  - `neighbors()` added for snapshots.
+- `Talk2Module`:
+  - `meshStopped` is emitted only when a mesh was running.
+  - New `meshSnapshot` (running flag, node id, neighbours, bounded rescan).
+  - The `meshPosition` event carries `packet` (the packet id) for evidence.
+- `BleMeshTransport.rescan()`: restarts the scan, at most once per 10 s.
+
+### UI
+- `mobile/src/RadarPeers.tsx`:
+  - Anonymous dots on range rings with compass letters; a legend and All, Direct and
+    Relayed filters below; the list below that. One filtered array feeds both.
+  - Each list row shows name, role with "Self-declared · unverified" or "Unverified
+    emergency staff", direct, relayed or paired route with hop count, last seen, and a
+    fresh distance with a cardinal bearing and an arrow relative to the compass.
+  - When a peer has no position, the row says honestly why: waiting for this phone's GPS,
+    location expired, or not shared.
+- Radar status banner, one at a time: refresh error with an action, location permission
+  denied, Bluetooth off, mesh error, scanning or no peers, GPS acquiring, or no phones.
+- Pull to refresh on the Radar screen (`shared/refresh.cjs`, one at a time, 8 s timeout).
+  It re-reads permissions and radios, reconciles the neighbour snapshot, restarts the mesh
+  if it stopped, re-announces presence and resends the shared location.
+- Icons: `react-native-vector-icons@10.3.0`, with only `MaterialCommunityIcons.ttf`
+  bundled (1.1 MB; see the `build.gradle` vectoricons block) and wrapped in
+  `mobile/src/Icon.tsx`.
+  - All emoji and symbol glyphs used as navigation, buttons, status or section labels were
+    replaced. User chat text is untouched.
+  - Icon-only controls have accessibility labels, and critical states pair the icon with
+    text.
+  - Emoji-prefixed i18n keys were renamed. New strings were added in mr, hi and gu;
+    coverage is 100% in all three.
+  - The package is deprecated upstream in favour of per-family packages; 10.3.0 works with
+    the pinned React Native 0.76.
+
+### Checks (2026-11-01)
+- `npm run check`: 32/32 JS tests pass (new `tests/mesh-location.test.cjs`, 8 tests);
+  `tsc --noEmit` is clean.
+- `scripts/test-java.ps1`: all 7 suites PASS. New `MeshRouterTest` cases:
+  - retained broadcast for a late neighbour
+  - no resend to a neighbour that holds custody
+  - reconnect flush
+  - newer own position supersedes the older one
+  - relayed position keeps A's identity at hops 1 and fires once
+  - own-echo suppression
+- `backend`: `npm test` 3/3.
+- `:app:assembleStandalone` succeeded with the workspace Gradle 8.13 binary (see the
+  Stage 2 notes).
+  - Final APK `mobile/android/app/build/outputs/apk/standalone/app-standalone.apk`,
+    `com.talk2` 1.1.0 (versionCode 2), debug-signed, 286,319,625 bytes, SHA-256
+    873603E643CD687BDAF67DE53ADCCB3CA63E25D6D48AE1AF5050D91201851FD4.
+
+### Physical evidence (2026-11-01, two phones, no internet)
+- **Phones:**
+  - A: Samsung SM-G991B (Android 15), profile "Adeed", UI language Marathi.
+  - B: vivo I2302 (Android 16).
+- **Build tested:** SHA-256 71ABB62A…CA89. The final build above only adds the
+  position-supersede change, which was not re-tested on the phones.
+- **Permissions on both:** fine location, Bluetooth scan, connect and advertise granted.
+- **Radios:** Wi-Fi and mobile data off, Bluetooth on. A ping showed both offline.
+- **Real GPS, not test points:**
+  - `cmd location` test providers needed `appops set android MOCK_LOCATION allow`.
+  - Even then, the vendor network and fused fixes took precedence, so the fixes were real
+    network/fused fixes of about ±20–100 m.
+  - All settings were restored afterwards.
+- **Before sharing:** B listed "Adeed · Citizen · Self-declared · unverified · Location not
+  shared · Direct mesh link", and the radar showed 0 fresh locations.
+- **A shares while B is connected:**
+  - B logged `meshPosition` packets a6da1188-40a2-4036-aaae-fd33c8d80629 (05:56:34 IST)
+    and 2b6a0790-3782-47ac-90b7-b133a099b90f (05:56:50), both hops=0.
+  - B showed "Location shared · waiting for your GPS" while its own fix was unusable.
+  - Once B's own fix was usable it showed "Radar: 1 people with a fresh location" and
+    Adeed at 7 m, then 2 m later. The phones were side by side.
+  - Same-build log: A received its own a6da1188 echoed at hops=1. That led to the
+    own-echo fix in the final build.
+- **B connects after A started sharing:**
+  - B was backgrounded so its mesh stopped, A enabled sharing (06:10:33 IST), and B
+    returned at 06:11:06.
+  - B's mesh links came up at 06:11:09–10.
+  - A's position 856ea4a5-4d0a-4fd8-b575-a6a6f7f235bf arrived at 06:11:15 (hops=0)
+    without A moving, followed by aa820d0b and 5e9bb415 within 2 s. That led to the
+    supersede fix.
+- **A stops sharing:** B showed "Location not shared" (explicit revocation, not expiry)
+  and 0 fresh locations within 22 s; each UI read takes about 5 s.
+- **A's screen slept** (secure lock): the mesh stopped and B's copy expired, as designed
+  for foreground-only use.
+
+### Not verified physically, next steps
+1. **A → relay → B with no direct A–B link.** Separate A and B beyond BLE range, or
+   shield them, with B between as the relay. Record the hop count shown on B (it should
+   be 1) and the packet ids.
+2. **A walking 50–200 m** and B's distance or bearing updating. The test-location
+   approach did not override vendor network fixes on these phones.
+3. **Visual checks on the phones:**
+   - Pull to refresh: spinner stops, plus the error and timeout banners.
+   - The permission-denied and Bluetooth-off banners.
+   - Icon appearance in light and dark themes.
+   - The compass arrow and bearing outdoors with a calibrated compass.
+4. **The Nothing A142** was not connected for this run.
