@@ -8,6 +8,7 @@ process.env.JWT_SECRET = "test-secret-that-is-long-enough-for-hs256-signing";
 process.env.JWT_EXPIRES_IN = "3650d";
 const createApp = require("../src/app");
 
+
 let mongo, server, base;
 before(async () => {
   mongo = await MongoMemoryServer.create();
@@ -16,11 +17,13 @@ before(async () => {
   server = createApp().listen(0);
   base = `http://127.0.0.1:${server.address().port}/api`;
 });
+
 after(async () => {
   server.close();
   await mongoose.disconnect();
   await mongo.stop();
 });
+
 
 async function call(method, path, body, token) {
   const res = await fetch(base + path, {
@@ -30,6 +33,7 @@ async function call(method, path, body, token) {
   });
   return { status: res.status, body: await res.json() };
 }
+
 
 test("signup, login, me and logout with a long-lived token", async () => {
   const signup = await call("POST", "/auth/signup", { name: "Asha", email: "Asha@Example.com", password: "secret123", role: "volunteer" });
