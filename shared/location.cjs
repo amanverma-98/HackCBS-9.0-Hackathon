@@ -20,9 +20,15 @@ function mergeLocationPeer(store, e, now = Date.now()) {
     verified:false, transport:"BLE mesh", route:e.hops > 0 ? "relayed" : "direct", lastSeen:now, packetTime:e.time, coords};
   return Object.fromEntries(Object.entries(next).slice(-128));
 }
+// One filtered collection feeds both the radar dots and the discovery list.
+// located: the peer's shared fix is still valid. polar: also needs this phone's own fresh fix.
 function peerView(peers, filter, local, heading, now = Date.now()) {
-  return peers.filter(p => filter === "all" || p.route === filter).map(p => ({...p, verified:false,
-    polar: usableLocation(local,now) && usableLocation(p.coords,now) ? position(local,p.coords,Number.isFinite(heading)?heading:0) : null,
-    uncertainty: usableLocation(local,now) && usableLocation(p.coords,now) ? local.accuracy+p.coords.accuracy : null}));
+  const self = usableLocation(local, now);
+  return peers.filter(p => filter === "all" || p.route === filter).map(p => {
+    const located = usableLocation(p.coords, now);
+    return {...p, verified:false, located,
+      polar: self && located ? position(local,p.coords,Number.isFinite(heading)?heading:0) : null,
+      uncertainty: self && located ? local.accuracy+p.coords.accuracy : null};
+  });
 }
 module.exports = { MAX_AGE, usableLocation, mergeLocationPeer, peerView };

@@ -9,6 +9,7 @@ public final class MeshRouterTest {
  static KeyPair key()throws Exception{KeyPairGenerator g=KeyPairGenerator.getInstance("EC");g.initialize(256);return g.generateKeyPair();}
  static String id(KeyPair k){return UUID.nameUUIDFromBytes(k.getPublic().getEncoded()).toString();}
  static void check(boolean v,String m){if(!v)throw new AssertionError(m);}
+ static Set<String> ids(List<String> wires){Set<String> r=new HashSet<>();if(wires!=null)for(String w:wires)try{r.add(MeshPacket.parse(w).id());}catch(Exception ignored){}return r;}
  public static void main(String[] args)throws Exception{
   KeyPair a=key(),b=key(),c=key();List<String> sent=new ArrayList<>(),events=new ArrayList<>();File file=Files.createTempDirectory("mesh-router").resolve("outbox.json").toFile();
   MeshRouter router=new MeshRouter(file,a,(type,data)->events.add(type),(n,w)->sent.add(w),false);
@@ -38,6 +39,38 @@ public final class MeshRouterTest {
    rb.neighbor("A-link",true);rb.receive("A-link",announce);rb.neighbor("C-link",true);for(String w:fromB)if(MeshPacket.parse(w).type().equals("presence"))rc.receive("B-link",w);
    check(seenAtC.equals(List.of(id(a)+"@1")),"C learns A's presence through B: "+seenAtC);
   }finally{ra.close();rb.close();rc.close();}
-  System.out.println("MeshRouterTest PASS: custody destination, recipient ACK identity, final hop, duplicate ACK recovery, control capacity, SOS priority, voice cleanup, multi-hop presence");
+  // Location broadcast: B takes custody first; C connects later and still gets A's valid position.
+  File retainDir=Files.createTempDirectory("mesh-retain").toFile();Map<String,List<String>> out=new HashMap<>();
+  MeshRouter ra2=new MeshRouter(new File(retainDir,"a.json"),a,(t,d)->{},(n,w)->out.computeIfAbsent(n,k->new ArrayList<>()).add(w),false);
+  try{ra2.neighbor("B-link",true);check(ra2.sendExtension("position","*","{\"time\":1}",1),"position admitted");
+   String position=out.get("B-link").get(0);String positionId=MeshPacket.parse(position).id();
+   ra2.receive("B-link",MeshPacket.create("custody",id(b),id(a),positionId,3,b).wire());
+   ra2.neighbor("C-link",true);check(ids(out.get("C-link")).contains(positionId),"late neighbour receives the retained position");
+   check(ra2.sendExtension("position","*","{\"time\":2}",1),"newer position admitted");String newer=out.get("B-link").get(out.get("B-link").size()-1);
+   ra2.neighbor("D-link",true);check(!ids(out.get("D-link")).contains(positionId)&&ids(out.get("D-link")).contains(MeshPacket.parse(newer).id()),"newer own position supersedes the queued older one");
+   positionId=MeshPacket.parse(newer).id();ra2.receive("B-link",MeshPacket.create("custody",id(b),id(a),positionId,3,b).wire());
+   int toB=out.get("B-link").size();ra2.neighbor("B-link",false);ra2.neighbor("B-link",true);check(out.get("B-link").size()==toB,"neighbour holding custody is not resent the broadcast");
+   // Reconnect inside the resend window still flushes an update the neighbour never acknowledged.
+   int toC=out.get("C-link").size();ra2.neighbor("C-link",false);ra2.neighbor("C-link",true);check(out.get("C-link").size()>toC&&ids(out.get("C-link").subList(toC,out.get("C-link").size())).contains(positionId),"reconnected neighbour gets queued update immediately");
+  }finally{ra2.close();}
+  // Relay A -> B -> C: C sees A's identity once with hops=1, duplicates do not re-fire events.
+  File relayDir=Files.createTempDirectory("mesh-relay-position").toFile();List<String> bOut=new ArrayList<>(),cEvents=new ArrayList<>();
+  MeshRouter rb2=new MeshRouter(new File(relayDir,"b.json"),b,(t,d)->{},(n,w)->{if(n.equals("C-link"))bOut.add(w);},false),rc2=new MeshRouter(new File(relayDir,"c.json"),c,(t,d)->{},(n,w)->{},false);
+  rb2.extension=new MeshRouter.Extension(){public boolean accept(MeshPacket p,String in){return true;}public void tick(){}public void custody(String body){}};
+  rc2.extension=new MeshRouter.Extension(){public boolean accept(MeshPacket p,String in){if(p.type().equals("position"))cEvents.add(p.sender()+"@"+p.json.optInt("hops"));return true;}public void tick(){}public void custody(String body){}};
+  try{String positionFromA=MeshPacket.create("position",id(a),"*","{\"time\":1}",1,a).wire();rb2.neighbor("A-link",true);rb2.receive("A-link",positionFromA);rb2.neighbor("C-link",true);
+   for(String w:new ArrayList<>(bOut))if(MeshPacket.parse(w).type().equals("position")){rc2.receive("B-link",w);rc2.receive("B-link",w);}
+   check(cEvents.equals(List.of(id(a)+"@1")),"relayed position keeps A's identity and fires once: "+cEvents);
+  }finally{rb2.close();rc2.close();}
+  // Echo: a relay bouncing A's own position back must not reach A's app or be flooded again.
+  File echoDir=Files.createTempDirectory("mesh-echo").toFile();List<String> echoOut=new ArrayList<>(),echoEvents=new ArrayList<>();
+  MeshRouter ra3=new MeshRouter(new File(echoDir,"a.json"),a,(t,d)->{},(n,w)->echoOut.add(w),false);
+  ra3.extension=new MeshRouter.Extension(){public boolean accept(MeshPacket p,String in){echoEvents.add(p.type());return true;}public void tick(){}public void custody(String body){}};
+  try{ra3.neighbor("B-link",true);ra3.sendExtension("position","*","{\"time\":1}",1);MeshPacket own=MeshPacket.parse(echoOut.get(0));int sends=echoOut.size();
+   ra3.receive("B-link",own.forwarded(id(b)).wire());
+   check(echoEvents.isEmpty(),"own echoed position is not delivered to the app");
+   check(echoOut.stream().skip(sends).noneMatch(w->{try{MeshPacket x=MeshPacket.parse(w);return x.id().equals(own.id())&&x.json.optInt("hops")>0;}catch(Exception e){return false;}}),"own echoed position is not re-flooded");
+  }finally{ra3.close();}
+  System.out.println("MeshRouterTest PASS: custody destination, recipient ACK identity, final hop, duplicate ACK recovery, control capacity, SOS priority, voice cleanup, multi-hop presence, retained broadcast for late neighbours, reconnect flush, relayed position identity, duplicate suppression, own-echo suppression");
  }
 }

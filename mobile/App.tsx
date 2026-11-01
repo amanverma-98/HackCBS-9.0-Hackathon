@@ -11,6 +11,7 @@ import {
   Platform,
   Pressable,
   SafeAreaView,
+  RefreshControl,
   ScrollView,
   Share,
   StatusBar,
@@ -22,6 +23,7 @@ import {
   useColorScheme,
 } from "react-native";
 import { RadarPeers } from "./src/RadarPeers";
+import { Icon } from "./src/Icon";
 import { TranslatedVoice } from "./src/TranslatedVoice";
 import { MeshVoicePanel } from "./src/MeshVoicePanel";
 import { Native, Mesh, events, permissions, permissionStatus, requestAllPermissions } from "./src/native";
@@ -34,6 +36,8 @@ const onboarding = require("../shared/onboarding.cjs");
 const i18n = require("../shared/i18n.cjs");
 const locationPolicy = require("../shared/location.cjs");
 const packUtils = require("../shared/model-packs.cjs");
+const meshLocation = require("../shared/mesh-location.cjs");
+const { createRefresher } = require("../shared/refresh.cjs");
 let activeUi = "en";
 function localized(value: any): any {
   if (typeof value === "string") return i18n.translate(value, activeUi);
@@ -151,6 +155,7 @@ function Button({
   secondary = false,
   disabled = false,
   c,
+  icon,
 }: any) {
   return (
     <Pressable
@@ -167,15 +172,18 @@ function Button({
         },
       ]}
     >
-      <Text
-        style={{
-          color: secondary ? c.ink : "#FFF",
-          fontWeight: "700",
-          textAlign: "center",
-        }}
-      >
-        {title}
-      </Text>
+      <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8 }}>
+        {!!icon && <Icon name={icon} size={18} color={secondary ? c.ink : "#FFF"} />}
+        <Text
+          style={{
+            color: secondary ? c.ink : "#FFF",
+            fontWeight: "700",
+            textAlign: "center",
+          }}
+        >
+          {title}
+        </Text>
+      </View>
     </Pressable>
   );
 }
@@ -306,7 +314,11 @@ export default function App() {
     [peerTalking, setPeerTalking] = useState(false),
     [pttHint, setPttHint] = useState(""),
     recordSince = useRef(0),
-    sealKey = useRef("");
+    sealKey = useRef(""),
+    refresher = useRef(createRefresher(8000)).current,
+    [refreshing, setRefreshing] = useState(false),
+    [refreshNote, setRefreshNote] = useState(""),
+    [refreshFix, setRefreshFix] = useState("");
   meshDirRef.current = meshDir;
   chatPeerRef.current = chatPeer;
   const [meshActive, setMeshActive] = useState(false),
@@ -315,9 +327,11 @@ export default function App() {
     [meshText, setMeshText] = useState("");
   const [meshLinkSeen, setMeshLinkSeen] = useState<Record<string, number>>({});
   const [meshLocations, setMeshLocations] = useState<Record<string, any>>({}),
-    [meshSharing, setMeshSharing] = useState(false), [peerRole, setPeerRole] = useState("unknown"),
+    [peerRole, setPeerRole] = useState("unknown"),
     [compassMeta, setCompassMeta] = useState<any>(null);
-  const meshSharingRef = useRef(false), meshEnabledRef = useRef(false), meshIdRef = useRef(""), lastMeshPosition = useRef(0);
+  const meshEnabledRef = useRef(false), meshIdRef = useRef("");
+  // Decides when the shared location is (re)sent: new fix, start, new neighbour, refresh, heartbeat.
+  const publisher = useRef(new meshLocation.LocationPublisher()).current;
   const [sensorStatus, setSensorStatus] = useState(
     "Waiting for a location fix",
   );
@@ -383,15 +397,16 @@ export default function App() {
     }
   };
   const wire = async (m: any) => Native.send(JSON.stringify(m));
-  const sendPosition = async (fix: any) => {
-    if (!locationPolicy.usableLocation(fix)) return;
-    const now = Date.now();
-    if (ref.current.shareLocation && paired.current) await wire({ id: uid(), kind: "position", time: now, expires: fix.time + 30000,
-      ageMs: Math.max(0, now - fix.time), coords: { latitude: fix.latitude, longitude: fix.longitude, accuracy: fix.accuracy } });
-    if (meshEnabledRef.current && meshSharingRef.current && now - lastMeshPosition.current >= 10000) {
-      lastMeshPosition.current = now;
-      await Native.shareMeshPosition(JSON.stringify({ time: now, expires: fix.time + 30000, coords: fix, name: ref.current.name, role: ref.current.role }));
-    }
+  /** Sends this phone's latest usable fix to the paired phone and the mesh, when the policy allows. */
+  const publishLocation = async (reason: string) => {
+    const fix = locationRef.current, now = Date.now();
+    if (!publisher.shouldPublish(fix, now, reason)) return;
+    publisher.markPublished(fix, now);
+    const update = meshLocation.positionUpdate(fix, now, { name: ref.current.name, role: ref.current.role });
+    if (paired.current)
+      await wire({ id: uid(), kind: "position", time: now, expires: update.expires, ageMs: Math.max(0, now - fix.time),
+        coords: { latitude: fix.latitude, longitude: fix.longitude, accuracy: fix.accuracy } }).catch(() => {});
+    if (meshEnabledRef.current) await Native.shareMeshPosition(JSON.stringify(update)).catch(() => {});
   };
   const control = (op: string, extra: any = {}) =>
     wire({
@@ -604,7 +619,7 @@ export default function App() {
       .then((raw: string) => {
         const previous = JSON.parse(raw);
         const d = onboarding.migrateSettings(previous, initial);
-        const migrated = { ...initial, ...d, messages: prune(d.messages) };
+        const migrated = { ...initial, ...d, shareLocation: false, messages: prune(d.messages) };
         update(migrated);
         if (previous?.settingsVersion !== 2)
           persist(migrated).catch((e: any) => setError(e.message));
@@ -647,8 +662,10 @@ export default function App() {
         if (e.type === "meshNeighbor") setMeshLinkSeen(old => { const next = { ...old }; if (e.connected) next[e.id] = Date.now(); else delete next[e.id]; return next; });
         if (e.type === "meshVoicePiece") setMeshLinkSeen(old => old[e.neighbor] ? { ...old, [e.neighbor]: Date.now() } : old);
         if (e.type === "meshNeighbor") setMeshPeers((old) => e.connected ? (old.includes(e.id) ? old : [...old, e.id]) : old.filter((id) => id !== e.id));
+        // A phone that just linked gets the current shared location without waiting for movement.
+        if (e.type === "meshNeighbor" && e.connected) publishLocation("neighbor");
         if (e.type === "meshError") setMeshIssue(e.message || "BLE mesh error");
-        if (e.type === "meshStopped") { meshEnabledRef.current = false; meshSharingRef.current = false; setMeshSharing(false); setMeshActive(false); setMeshPeers([]); setMeshLinkSeen({}); }
+        if (e.type === "meshStopped") { meshEnabledRef.current = false; setMeshActive(false); setMeshPeers([]); setMeshLinkSeen({}); }
         if (e.type === "meshMessage" || e.type === "meshSOS") receiveMesh(e).catch((x: any) => setError(x.message));
         if (e.type === "meshReceipt" && typeof e.body === "string")
           change({ messages: ref.current.messages.map((m) => (m.id === e.body && m.mesh && m.direction === "out" ? { ...m, status: "delivered" } : m)) });
@@ -738,7 +755,7 @@ export default function App() {
           if (ref.current.shareLocation) {
             permissions("location")
               .then(() => Native.startSensors())
-              .then(() => sendPosition(locationRef.current))
+              .then(() => publishLocation("neighbor"))
               .catch((x: any) => setError(x.message));
           }
         }
@@ -783,7 +800,7 @@ export default function App() {
           setSensorStatus(
             `${e.provider || "GPS"} · ±${Math.round(e.accuracy)} m`,
           );
-          sendPosition(e)?.catch((x: any) => setError(x.message));
+          publishLocation("fix").catch(() => {});
         }
         if (e.type === "download") setProgress(e);
         if (e.type === "metric") setMetrics((m: any) => ({ ...m, ...e }));
@@ -1141,7 +1158,8 @@ export default function App() {
     onPress: () => any,
     secondary = false,
     disabled = false,
-  ) => <Button {...{ title, onPress, secondary, disabled, c }} />;
+    icon?: string,
+  ) => <Button {...{ title, onPress, secondary, disabled, c, icon }} />;
   const field = (
     value: string,
     onChangeText: (s: string) => void,
@@ -1153,9 +1171,15 @@ export default function App() {
       {...{ value, onChangeText, placeholder, multiline, secureTextEntry, c }}
     />
   );
-  const label = (text: string) => (
-    <Text style={[s.label, { color: c.muted }]}>{text}</Text>
-  );
+  const label = (text: string, icon?: string) =>
+    icon ? (
+      <View style={s.labelRow}>
+        <Icon name={icon} size={15} color={c.muted} />
+        <Text style={[s.label, { color: c.muted, marginTop: 0, marginBottom: 0 }]}>{text}</Text>
+      </View>
+    ) : (
+      <Text style={[s.label, { color: c.muted }]}>{text}</Text>
+    );
   const card = (children: React.ReactNode, key?: string) => (
     <View
       key={key}
@@ -1185,7 +1209,7 @@ export default function App() {
     onChange: (value: boolean) => void,
   ) => (
     <View style={[s.row, { paddingVertical: 6, flexWrap: "nowrap" }]}>
-      <Text style={s.rowIcon}>{icon}</Text>
+      <View style={s.rowIconBox}><Icon name={icon} size={20} color={c.ink} /></View>
       <View style={{ flex: 1 }}>
         <Text style={{ color: c.ink, fontSize: 15, fontWeight: "600" }}>{name}</Text>
         {!!detail && <Text style={[s.small, { color: c.muted, marginTop: 0 }]}>{detail}</Text>}
@@ -1219,7 +1243,7 @@ export default function App() {
         )}
       </View>
       {button(
-        "▣ Choose profile photo",
+        "Choose profile photo",
         () =>
           run(async () => {
             const uri = await Native.chooseProfilePhoto();
@@ -1234,51 +1258,39 @@ export default function App() {
       )}
     </>
   );
-  const setLocationSharing = (value: boolean) => {
-    change({ shareLocation: value });
-    if (value)
-      run(async () => {
-        await permissions("location");
-        await Native.startSensors();
-        await sendPosition(locationRef.current);
-      });
-    else {
-      if (!meshSharingRef.current) Native.stopSensors();
-      if (paired.current)
-        wire({ id: uid(), kind: "position-off", time: Date.now() }).catch(
-          (e: any) => setError(e.message),
-        );
+  /**
+   * One switch for location sharing. Turning it on asks consent every session because the mesh
+   * is public: nearby phones and relays receive the coordinates, name and self-declared role.
+   */
+  const toggleSharing = (value: boolean) => {
+    if (!value) {
+      change({ shareLocation: false });
+      publisher.setSharing(false);
+      const now = Date.now();
+      if (paired.current) wire({ id: uid(), kind: "position-off", time: now }).catch(() => {});
+      if (meshEnabledRef.current) Native.shareMeshPosition(JSON.stringify(meshLocation.positionOff(now))).catch(() => {});
+      if (tab !== "radar") Native.stopSensors();
+      return;
     }
-  };
-  const askPublicLocation = () =>
     Alert.alert(
-      "Share public mesh location",
-      "Your coordinates, name and self-declared role will be public to nearby phones and relays for 30 seconds per update.",
+      "Share my location",
+      "Your coordinates, name and self-declared role go to your paired phone and to nearby Talk2 phones over the mesh, including relays. Each update expires after 30 seconds.",
       [
-        { text: "Paired phone only", style: "cancel" },
+        { text: "Cancel", style: "cancel" },
         {
           text: "Share location",
-          onPress: () =>
+          onPress: () => {
+            change({ shareLocation: true });
+            publisher.setSharing(true);
             run(async () => {
               await permissions("location");
               await Native.startSensors();
-              if (!meshEnabledRef.current) return;
-              meshSharingRef.current = true;
-              setMeshSharing(true);
-              lastMeshPosition.current = 0;
-              await sendPosition(locationRef.current);
-            }),
+              await publishLocation("start");
+            });
+          },
         },
       ],
     );
-  const toggleSharing = (value: boolean) => {
-    setLocationSharing(value);
-    if (value && meshEnabledRef.current) askPublicLocation();
-    if (!value && meshSharingRef.current) {
-      meshSharingRef.current = false;
-      setMeshSharing(false);
-      run(() => Native.shareMeshPosition(JSON.stringify({ off: true, time: Date.now(), expires: Date.now() + 30000 })));
-    }
   };
   async function refreshPermissions() {
     try {
@@ -1302,13 +1314,13 @@ export default function App() {
   function permissionCard() {
     const row = (icon: string, name: string, detail: string, ok: boolean | undefined, action: string, fix?: () => any) => (
       <View key={name} style={[s.settingRow, s.permRow, { borderColor: c.line }]}>
-        <Text style={s.rowIcon}>{icon}</Text>
+        <View style={s.rowIconBox}><Icon name={icon} size={20} color={c.ink} /></View>
         <View style={{ flex: 1 }}>
           <Text style={{ color: c.ink, fontSize: 15, fontWeight: "600" }}>{name}</Text>
           <Text style={[s.small, { color: c.muted, marginTop: 0 }]}>{detail}</Text>
         </View>
         {ok ? (
-          <NativeText style={{ color: "#2BAA72", fontSize: 18, fontWeight: "800" }}>✓</NativeText>
+          <View style={[s.packLine, { marginTop: 0 }]}><Icon name="check-circle" size={18} color="#2BAA72" /><Text style={{ color: "#2BAA72", fontSize: 12, fontWeight: "700" }}>On</Text></View>
         ) : fix ? (
           <Pressable accessibilityRole="button" onPress={() => run(fix)} style={[s.downloadButton, { borderColor: "#1769AA", paddingVertical: 6 }]}>
             <Text style={{ color: "#1769AA", fontWeight: "700", fontSize: 13 }}>{action}</Text>
@@ -1330,25 +1342,25 @@ export default function App() {
       radios.bluetooth === false || radios.location === false || radios.wifi === false;
     return card(
       <>
-        {label("🔐 PERMISSIONS")}
+        {label("PERMISSIONS", "shield-key-outline")}
         <Text style={[s.small, { color: c.muted, marginTop: 0 }]}>
           Allow everything once now so every feature works offline later.
         </Text>
-        {runtime("mic", "🎙", "Microphone", "Hold to talk and voice notes")}
-        {runtime("location", "📍", "Location", "Radar distance and finding nearby phones")}
-        {runtime("nearby", "ᛒ", "Nearby devices", "Find and connect phones over Bluetooth")}
-        {runtime("wifiNearby", "📶", "Nearby Wi-Fi devices", "Wi-Fi Direct connections")}
-        {runtime("notifications", "🔔", "Notifications", "Incoming alerts and SOS", "notifications")}
+        {runtime("mic", "microphone", "Microphone", "Hold to talk and voice notes")}
+        {runtime("location", "map-marker", "Location", "Radar distance and finding nearby phones")}
+        {runtime("nearby", "bluetooth", "Nearby devices", "Find and connect phones over Bluetooth")}
+        {runtime("wifiNearby", "wifi", "Nearby Wi-Fi devices", "Wi-Fi Direct connections")}
+        {runtime("notifications", "bell-outline", "Notifications", "Incoming alerts and SOS", "notifications")}
         {radios.bluetooth !== undefined &&
-          row("ᛒ", "Bluetooth", "Must be on to connect phones", radios.bluetooth, "Turn on", () => Native.enableBluetooth())}
+          row("bluetooth", "Bluetooth", "Must be on to connect phones", radios.bluetooth, "Turn on", () => Native.enableBluetooth())}
         {radios.location !== undefined &&
-          row("🛰", "Location services", "Must be on for scanning and radar", radios.location, "Turn on", () => Native.openSystemSettings("location"))}
+          row("crosshairs-gps", "Location services", "Must be on for scanning and radar", radios.location, "Turn on", () => Native.openSystemSettings("location"))}
         {radios.wifi !== undefined &&
-          row("📡", "Wi-Fi", "Must be on for Wi-Fi Direct (no internet needed)", radios.wifi, "Turn on", () => Native.openSystemSettings("wifi"))}
-        {row("📳", "Vibration", "Granted automatically at install", true, "")}
-        {row("🔘", "Hardware buttons", "Work inside Talk2 without a permission", true, "")}
+          row("wifi", "Wi-Fi", "Must be on for Wi-Fi Direct (no internet needed)", radios.wifi, "Turn on", () => Native.openSystemSettings("wifi"))}
+        {row("vibrate", "Vibration", "Granted automatically at install", true, "")}
+        {row("gesture-tap-button", "Hardware buttons", "Work inside Talk2 without a permission", true, "")}
         {pending &&
-          button("✓ Allow all", allowAll)}
+          button("Allow all", allowAll, false, false, "check-all")}
       </>,
     );
   }
@@ -1416,14 +1428,13 @@ export default function App() {
     const p = packInfo(code);
     if (p.builtInSpeech)
       return (
-        <Text style={{ color: "#2BAA72", fontSize: 13 }}>✓ Built-in · works offline</Text>
+        <View style={s.packLine}><Icon name="check-circle" size={14} color="#2BAA72" /><Text style={{ color: "#2BAA72", fontSize: 13 }}>Built-in · works offline</Text></View>
       );
     if (p.state === "installed")
       return (
         <View style={s.packLine}>
-          <Text style={{ color: "#2BAA72", flex: 1, fontSize: 13 }}>
-            ✓ Installed · works offline
-          </Text>
+          <Icon name="check-circle" size={14} color="#2BAA72" />
+          <Text style={{ color: "#2BAA72", flex: 1, fontSize: 13 }}>Installed · works offline</Text>
           <Pressable onPress={() => removePack(code, name)} hitSlop={8}>
             <Text style={{ color: "#B84A29", fontSize: 13 }}>Remove</Text>
           </Pressable>
@@ -1483,9 +1494,12 @@ export default function App() {
             { borderColor: "#1769AA", opacity: downloading ? 0.45 : 1 },
           ]}
         >
-          <NativeText style={{ color: "#1769AA", fontWeight: "700" }}>
-            {`⬇ ${i18n.translate(verb, activeUi)} · ${partial ? `${i18n.mb(p.downloadedBytes)} / ` : ""}${i18n.mb(p.expectedBytes)} MB`}
-          </NativeText>
+          <View style={[s.packLine, { marginTop: 0 }]}>
+            <Icon name="download" size={16} color="#1769AA" />
+            <NativeText style={{ color: "#1769AA", fontWeight: "700" }}>
+              {`${i18n.translate(verb, activeUi)} · ${partial ? `${i18n.mb(p.downloadedBytes)} / ` : ""}${i18n.mb(p.expectedBytes)} MB`}
+            </NativeText>
+          </View>
         </Pressable>
         {partial && !downloading && (
           <Pressable onPress={() => removePack(code, name)} hitSlop={8}>
@@ -1510,7 +1524,7 @@ export default function App() {
         onPress={onPress}
         style={s.settingPress}
       >
-        <Text style={s.rowIcon}>{icon}</Text>
+        <View style={s.rowIconBox}><Icon name={icon} size={20} color={c.ink} /></View>
         <Text style={{ color: c.ink, flex: 1, fontSize: 15, fontWeight: "600" }}>
           {name}
         </Text>
@@ -1529,15 +1543,15 @@ export default function App() {
       voice = langOf(data.targetTranslation);
     return card(
       <>
-        {label("🌐 LANGUAGE & VOICE")}
+        {label("LANGUAGE & VOICE", "translate")}
         {settingRow(
-          "🈯",
+          "translate",
           "App language",
           langOf(data.ui)?.native || "English",
           () => setPicker("ui"),
         )}
         {settingRow(
-          "🎙",
+          "microphone",
           "I speak",
           source?.native || "",
           () => setPicker("source"),
@@ -1551,7 +1565,7 @@ export default function App() {
           ) : null,
         )}
         {settingRow(
-          "🔁",
+          "swap-horizontal",
           "Translate to",
           target?.native || "",
           () => setPicker("target"),
@@ -1560,9 +1574,10 @@ export default function App() {
               Messages you receive are shown and spoken in this language.
             </Text>
             {packInfo(data.targetTranslation).builtInVoice ? (
-              <Text style={{ color: "#2BAA72", fontSize: 13 }}>
-                ✓ Built-in voice · no download
-              </Text>
+              <View style={s.packLine}>
+                <Icon name="check-circle" size={14} color="#2BAA72" />
+                <Text style={{ color: "#2BAA72", fontSize: 13 }}>Built-in voice · no download</Text>
+              </View>
             ) : (
               packAction(data.targetTranslation, voice?.name || data.targetTranslation)
             )}
@@ -1576,7 +1591,7 @@ export default function App() {
             )}
           </View>,
         )}
-        {label("🎤 HOLD-TO-TALK SENDS")}
+        {label("HOLD-TO-TALK SENDS", "microphone-outline")}
         <View style={s.segment}>
           {[
             ["original", "Original voice"],
@@ -1662,7 +1677,7 @@ export default function App() {
                         ? i18n.translate("Installed", activeUi)
                         : p.state === "unavailable"
                           ? i18n.translate("Not available", activeUi)
-                          : `⬇ ${i18n.mb(p.expectedBytes)} MB`;
+                          : `${i18n.mb(p.expectedBytes)} MB`;
                 return (
                   <Pressable
                     key={l.code}
@@ -1707,16 +1722,9 @@ export default function App() {
                         {badge}
                       </NativeText>
                     )}
-                    <NativeText
-                      style={{
-                        color: "#1769AA",
-                        fontSize: 18,
-                        width: 24,
-                        textAlign: "right",
-                      }}
-                    >
-                      {selected ? "✓" : ""}
-                    </NativeText>
+                    <View style={{ width: 24, alignItems: "flex-end" }}>
+                      {selected && <Icon name="check" size={20} color="#1769AA" label={localized("Selected")} />}
+                    </View>
                   </Pressable>
                 );
               })}
@@ -1739,7 +1747,7 @@ export default function App() {
           card(
             <>
               {note(
-                `${m.direction === "out" ? "You" : m.name || "Peer"}${m.mesh ? (m.private ? " · 🔒📡" : " · 📢") : " · 🔒"} · ${m.language === "und" ? i18n.translate("Language unknown", activeUi) : m.language.toUpperCase()} · ${new Date(m.time).toLocaleTimeString()} · ${i18n.translate(m.mesh && m.status === "custody" ? "Relay accepted a piece; recipient delivery pending" : m.status, activeUi)}`,
+                `${m.direction === "out" ? "You" : m.name || "Peer"}${m.mesh ? (m.private ? ` · ${i18n.translate("Private · mesh", activeUi)}` : ` · ${i18n.translate("Public", activeUi)}`) : ` · ${i18n.translate("Private", activeUi)}`} · ${m.language === "und" ? i18n.translate("Language unknown", activeUi) : m.language.toUpperCase()} · ${new Date(m.time).toLocaleTimeString()} · ${i18n.translate(m.mesh && m.status === "custody" ? "Relay accepted a piece; recipient delivery pending" : m.status, activeUi)}`,
               )}
               <NativeText selectable style={[s.message, { color: c.ink }]}>
                 {m.template
@@ -1757,13 +1765,15 @@ export default function App() {
               <View style={s.row}>
                 {(m.kind !== "voice" || !!m.translated || !!m.transcript) &&
                   button(
-                    `▶ ${langOf(data.targetTranslation)?.native || "Play"}`,
+                    langOf(data.targetTranslation)?.native || "Play",
                     () => run(() => play(m), "Speaking…"),
                     true,
+                    false,
+                    "volume-high",
                   )}
                 {m.kind === "voice" &&
                   !!m.audioUri &&
-                  button("▶ Original voice", () => run(() => play(m, true), "Speaking…"), true)}
+                  button("Original voice", () => run(() => play(m, true), "Speaking…"), true, false, "play")}
                 {m.direction === "out" &&
                   !m.mesh &&
                   m.status !== "delivered" &&
@@ -1780,7 +1790,7 @@ export default function App() {
         )
     ) : (
       <View style={s.empty}>
-        <Text style={{ fontSize: 42, color: "#2D8DD0" }}>◌</Text>
+        <Icon name="message-processing-outline" size={44} color="#2D8DD0" />
         {title("A little closer, in every language.")}
         {note("Connect two phones or save a message for later.")}
       </View>
@@ -1792,7 +1802,7 @@ export default function App() {
       permissions("location")
         .then(() => Native.startSensors())
         .catch((e: any) => setSensorStatus(e.message));
-    else if (!ref.current.shareLocation && !meshSharingRef.current) Native.stopSensors();
+    else if (!ref.current.shareLocation) Native.stopSensors();
   }, [tab, data.setup]);
   // The mesh is always on while Talk2 is open; Android stops it in the background.
   useEffect(() => {
@@ -1806,27 +1816,69 @@ export default function App() {
         setMeshNode(id);
         setMeshActive(true);
         setMeshIssue("");
+        publishLocation("start");
       })
       .catch((e: any) => setMeshIssue(e.message || String(e)))
       .finally(() => {
         meshStarting.current = false;
       });
   }, [loaded, data.setup, appActive, meshActive, permState.nearby, radios.bluetooth]);
+  useEffect(() => {
+    if (!data.shareLocation) return;
+    const timer = setInterval(() => publishLocation("heartbeat"), 5000);
+    return () => clearInterval(timer);
+  }, [data.shareLocation]);
+  async function announcePresence() {
+    try {
+      if (!sealKey.current) sealKey.current = await Native.meshSealKey();
+      await Native.announceMesh(
+        JSON.stringify({ name: ref.current.name, role: ref.current.role, device: ref.current.deviceId, speak: ref.current.sourceSpeech, hear: ref.current.targetTranslation, key: sealKey.current }),
+      );
+    } catch {
+      // The next announcement retries.
+    }
+  }
+  /**
+   * Pull to refresh: re-read permissions and radios, reconcile the native neighbour table (fixing
+   * stale links), restart the mesh if it stopped, rescan (bounded natively), re-announce and resend
+   * the shared location. One refresh at a time; the spinner stops on success, error or timeout.
+   */
+  const refreshRadar = async () => {
+    setRefreshing(true);
+    setRefreshNote("");
+    const result = await refresher(async () => {
+      await refreshPermissions();
+      const radio = JSON.parse(await Native.radioState());
+      setRadios(radio);
+      if (!radio.bluetooth) throw Object.assign(new Error("Bluetooth is off. Turn it on to find nearby phones."), { fix: "bluetooth" });
+      if (!radio.location) throw Object.assign(new Error("Location services are off. Turn them on for distance and direction."), { fix: "location" });
+      const granted = await permissionStatus();
+      if (granted.location !== "granted" || (granted.nearby && granted.nearby !== "granted"))
+        throw Object.assign(new Error("Talk2 needs Location and Nearby devices permission to scan."), { fix: "permissions" });
+      await Native.startSensors();
+      const snap = JSON.parse(await Native.meshSnapshot());
+      if (!snap.running) {
+        meshEnabledRef.current = false;
+        setMeshActive(false); // the always-on effect restarts it
+      } else {
+        setMeshPeers(Array.isArray(snap.neighbors) ? snap.neighbors : []);
+        setMeshDir((old) => Object.fromEntries(Object.entries(old).filter(([, p]: any) => Date.now() - p.lastSeen < 90000)));
+        await announcePresence();
+        await publishLocation("refresh");
+      }
+    });
+    setRefreshing(false);
+    if (result.status === "error") {
+      setRefreshNote(result.message);
+      setRefreshFix(/Bluetooth is off/.test(result.message) ? "bluetooth" : /Location services/.test(result.message) ? "location" : /permission/.test(result.message) ? "permissions" : "");
+    } else if (result.status === "timeout") setRefreshNote("Refresh timed out. Pull down to try again.");
+    else setRefreshFix("");
+  };
   // Announce this phone so others, even several hops away, can list and message it.
   useEffect(() => {
     if (!meshActive) return;
-    const announce = async () => {
-      try {
-        if (!sealKey.current) sealKey.current = await Native.meshSealKey();
-        await Native.announceMesh(
-          JSON.stringify({ name: ref.current.name, role: ref.current.role, device: ref.current.deviceId, speak: ref.current.sourceSpeech, hear: ref.current.targetTranslation, key: sealKey.current }),
-        );
-      } catch {
-        // The next announcement retries.
-      }
-    };
-    announce();
-    const timer = setInterval(announce, 20000);
+    announcePresence();
+    const timer = setInterval(announcePresence, 20000);
     return () => clearInterval(timer);
   }, [meshActive, data.name, data.targetTranslation]);
   // Load translation and the playback voice early so the first message is not delayed.
@@ -1885,9 +1937,7 @@ export default function App() {
           { backgroundColor: listening ? "#2D8DD0" : channelBusy ? "#D35D5D" : "#2BAA72" },
         ]}
       >
-        <NativeText style={{ color: "#FFF", fontSize: 26 }}>
-          {listening ? "🎙" : channelBusy ? "⏳" : "●"}
-        </NativeText>
+        <Icon name={listening ? "microphone" : channelBusy ? "timer-sand" : "microphone-outline"} size={30} color="#FFF" />
         <Text style={{ color: "#FFF", fontWeight: "800", textAlign: "center" }}>
           {pttState === "recording"
             ? "Listening… release to send"
@@ -1917,7 +1967,7 @@ export default function App() {
   function peopleList() {
     return (
       <>
-        {label("📡 PEOPLE ON THE MESH")}
+        {label("PEOPLE ON THE MESH", "access-point-network")}
         {meshPeople.length === 0 ? (
           <Text style={[s.small, { color: c.muted }]}>
             {meshActive ? "Looking for people nearby…" : meshIssue || "Mesh is starting…"}
@@ -1926,7 +1976,7 @@ export default function App() {
           meshPeople.map((p: any) => (
             <View key={p.id} style={[s.peerRow, { backgroundColor: c.card, borderColor: c.line }]}>
               <View style={[s.peerIcon, { backgroundColor: p.hops ? "#FBE9DF" : "#E8F3EC" }]}>
-                <NativeText style={{ fontSize: 18 }}>{p.hops ? "🔀" : "📡"}</NativeText>
+                <Icon name={p.hops ? "transit-connection-variant" : "access-point"} size={20} color={p.hops ? "#D47743" : "#2BAA72"} />
               </View>
               <View style={{ flex: 1 }}>
                 <NativeText numberOfLines={1} style={{ color: c.ink, fontWeight: "700", fontSize: 15 }}>
@@ -1960,6 +2010,27 @@ export default function App() {
     ...(connected ? [{ id: peerId.current || "paired", name: peerName, role: peerRole, transport: "Paired direct", connected: true, route: "direct", coords: peerLocation, lastSeen: peerLocation?.time }] : []),
   ];
   const visiblePeers = locationPolicy.peerView(discoveredPeers, peerFilter, location, radarHeading, clock);
+  const selfFresh = locationPolicy.usableLocation(location, clock);
+  const radarStatus: { icon: string; color: string; text: string; busy?: boolean; action?: string; onAction?: () => void } | null =
+    refreshNote
+      ? {
+          icon: "alert-circle-outline", color: "#D35D5D", text: localized(refreshNote),
+          action: refreshFix === "bluetooth" ? localized("Turn on") : refreshFix === "location" ? localized("Turn on") : refreshFix === "permissions" ? localized("Allow") : localized("Retry"),
+          onAction: () => (refreshFix === "bluetooth" ? run(() => Native.enableBluetooth()) : refreshFix === "location" ? run(() => Native.openSystemSettings("location")) : refreshFix === "permissions" ? setRoute("permissions") : refreshRadar()),
+        }
+      : permState.location && permState.location !== "granted"
+        ? { icon: "map-marker-off-outline", color: "#D35D5D", text: localized("Location permission is off: distance and direction are unavailable."), action: localized("Allow"), onAction: () => setRoute("permissions") }
+        : radios.bluetooth === false
+          ? { icon: "bluetooth-off", color: "#D35D5D", text: localized("Bluetooth is off. Turn it on to find nearby phones."), action: localized("Turn on"), onAction: () => run(() => Native.enableBluetooth()) }
+          : !meshActive && meshIssue
+            ? { icon: "access-point-network-off", color: "#D35D5D", text: `${localized("Mesh connection problem")}: ${localized(meshIssue)}`, action: localized("Retry"), onAction: refreshRadar }
+            : refreshing || (meshActive && meshPeople.length === 0 && !connected)
+              ? { icon: "radar", color: "#2D8DD0", busy: true, text: localized("Scanning for nearby phones… Pull down to scan again.") }
+              : !selfFresh
+                ? { icon: "crosshairs-question", color: "#E0A030", busy: true, text: localized(location ? "Improving your GPS fix (needs ±100 m or better)…" : "Acquiring your GPS position…") }
+                : visiblePeers.length === 0
+                  ? { icon: "account-search-outline", color: c.muted, text: localized("No phones found nearby. Pull down to scan again.") }
+                  : null;
   useEffect(() => {
     if (
       !connected ||
@@ -2033,9 +2104,10 @@ export default function App() {
                 note(
                   "Unverified emergency staff. Role verification is not available yet. You can skip future email OTP and continue without internet.",
                 )}
-              <Text style={[s.small, { color: "#B84A29" }]}>
-                🔒 Choose carefully: your role can't be changed later.
-              </Text>
+              <View style={s.packLine}>
+                <Icon name="lock-outline" size={14} color="#B84A29" />
+                <Text style={[s.small, { color: "#B84A29", flex: 1, marginTop: 0 }]}>Choose carefully: your role can't be changed later.</Text>
+              </View>
             </>,
           )}
           {permissionCard()}
@@ -2098,14 +2170,14 @@ export default function App() {
   else if (route === "permissions")
     content = (
       <>
-        {button("← Settings", () => setRoute(""), true)}
+        {button("Settings", () => setRoute(""), true, false, "arrow-left")}
         {permissionCard()}
       </>
     );
   else if (route === "analysis")
     content = (
       <>
-        {button("← Settings", () => setRoute(""), true)}
+        {button("Settings", () => setRoute(""), true, false, "arrow-left")}
         {card(
           <>
             {title("Measured on this phone")}
@@ -2135,7 +2207,7 @@ export default function App() {
   else if (route === "gpt")
     content = (
       <>
-        {button("← Settings", () => setRoute(""), true)}
+        {button("Settings", () => setRoute(""), true, false, "arrow-left")}
         {card(
           <>
             {title("Ask GPT · online")}
@@ -2183,20 +2255,27 @@ export default function App() {
           <>
             <View style={s.row}>
               <View style={{ flex: 1 }}>
+                <View style={[s.packLine, { marginTop: 0 }]}>
+                <Icon
+                  name={sendPath().kind !== "none" ? "lock" : connectionState === "reconnecting" ? "progress-clock" : "circle-outline"}
+                  size={18}
+                  color={sendPath().kind !== "none" ? "#2BAA72" : connectionState === "reconnecting" ? "#E0A030" : c.muted}
+                />
                 {title(
                   sendPath().kind === "direct"
-                    ? `● ${peerName}`
+                    ? peerName
                     : chatPeer
-                      ? `● ${chatPeer.name}`
+                      ? chatPeer.name
                       : connectionState === "reconnecting"
-                        ? "◌ Reconnecting…"
-                        : "○ Ready when you are",
+                        ? "Reconnecting…"
+                        : "Ready when you are",
                 )}
+                </View>
                 {note(
                   sendPath().kind === "direct"
-                    ? "🔒 Private · direct link"
+                    ? "Private · direct link"
                     : chatPeer
-                      ? `🔒 ${i18n.translate("Private · via mesh", activeUi)}${meshDir[chatPeer.id]?.hops ? ` · ${meshDir[chatPeer.id].hops} ${i18n.translate(meshDir[chatPeer.id].hops === 1 ? "phone" : "phones", activeUi)}` : ""}`
+                      ? `${i18n.translate("Private · via mesh", activeUi)}${meshDir[chatPeer.id]?.hops ? ` · ${meshDir[chatPeer.id].hops} ${i18n.translate(meshDir[chatPeer.id].hops === 1 ? "phone" : "phones", activeUi)}` : ""}`
                       : connectionState === "reconnecting"
                         ? meshDir[peerMeshId.current]
                           ? "Messages go through the mesh meanwhile."
@@ -2205,7 +2284,7 @@ export default function App() {
                 )}
                 {!!chatPeer && (
                   <Pressable hitSlop={8} onPress={() => setChatPeer(null)}>
-                    <Text style={{ color: "#1769AA", fontSize: 13, fontWeight: "700" }}>✕ End chat</Text>
+                    <View style={s.packLine}><Icon name="close" size={14} color="#1769AA" /><Text style={{ color: "#1769AA", fontSize: 13, fontWeight: "700" }}>End chat</Text></View>
                   </Pressable>
                 )}
               </View>
@@ -2252,9 +2331,10 @@ export default function App() {
                 onPress={() => setPackPrompt(data.sourceSpeech)}
                 style={[s.hint, { borderColor: "#D47743" }]}
               >
-                <Text style={{ color: c.ink, fontSize: 13 }}>
-                  ⚠ Speech pack needed for Translated speech · tap to fix
-                </Text>
+                <View style={[s.packLine, { marginTop: 0 }]}>
+                  <Icon name="alert-outline" size={16} color="#D47743" />
+                  <Text style={{ color: c.ink, fontSize: 13, flex: 1 }}>Speech pack needed for Translated speech · tap to fix</Text>
+                </View>
               </Pressable>
             )}
             {mic}
@@ -2274,7 +2354,7 @@ export default function App() {
         {card(
           <>
             <View style={[s.row, { flexWrap: "nowrap" }]}>
-              <Text style={s.rowIcon}>📡</Text>
+              <Icon name="access-point-network" size={22} color={meshActive ? "#2BAA72" : "#E0A030"} />
               <View style={{ flex: 1 }}>
                 <Text style={{ color: c.ink, fontSize: 17, fontWeight: "800" }}>Nearby mesh</Text>
                 <NativeText style={[s.small, { color: c.muted, marginTop: 0 }]}>
@@ -2283,34 +2363,42 @@ export default function App() {
                     : meshIssue || i18n.translate("Mesh is starting…", activeUi)}
                 </NativeText>
               </View>
-              <View style={[s.netDot, { backgroundColor: meshActive ? "#2BAA72" : "#E0A030" }]} />
             </View>
             {option(
-              "📍",
+              "map-marker-radius-outline",
               "Share my location",
-              meshActive ? "Paired phone and nearby mesh phones" : "Only with the paired phone",
-              data.shareLocation || meshSharing,
+              "Paired phone and nearby mesh phones while Talk2 is open",
+              data.shareLocation,
               toggleSharing,
             )}
           </>,
+        )}
+        {radarStatus && (
+          <View style={[s.statusBanner, { borderColor: radarStatus.color, backgroundColor: c.card }]}>
+            {radarStatus.busy ? <ActivityIndicator color={radarStatus.color} /> : <Icon name={radarStatus.icon} size={20} color={radarStatus.color} />}
+            <Text style={{ color: c.ink, flex: 1, fontSize: 13 }}>{radarStatus.text}</Text>
+            {!!radarStatus.action && (
+              <Pressable accessibilityRole="button" onPress={radarStatus.onAction} style={[s.downloadButton, { borderColor: "#1769AA", paddingVertical: 6 }]}>
+                <Text style={{ color: "#1769AA", fontWeight: "700", fontSize: 13 }}>{radarStatus.action}</Text>
+              </Pressable>
+            )}
+          </View>
         )}
         {card(
           <RadarPeers
             colors={c}
             peers={visiblePeers}
+            filter={peerFilter}
+            onFilter={setPeerFilter}
             heading={radarHeading}
             compass={compassReliable}
             ui={activeUi}
+            now={clock}
           />,
-        )}
-        {!location && (
-          <Text style={[s.small, { color: c.muted, textAlign: "center", marginBottom: 12 }]}>
-            {sensorStatus}
-          </Text>
         )}
         {card(
           <>
-            {label("📢 PUBLIC MESSAGE TO EVERYONE NEARBY")}
+            {label("PUBLIC MESSAGE TO EVERYONE NEARBY", "bullhorn-outline")}
             <Field
               value={meshText}
               onChangeText={setMeshText}
@@ -2352,7 +2440,7 @@ export default function App() {
                 }
                 style={[s.segmentItem, { backgroundColor: "#C2412D", borderColor: "#C2412D" }]}
               >
-                <Text style={{ color: "#FFF", fontWeight: "800", textAlign: "center" }}>🆘 SOS</Text>
+                <View style={[s.packLine, { justifyContent: "center", marginTop: 0 }]}><Icon name="alarm-light-outline" size={18} color="#FFF" /><Text style={{ color: "#FFF", fontWeight: "800", textAlign: "center" }}>SOS</Text></View>
               </Pressable>
             </View>
             <Text style={[s.small, { color: c.muted }]}>
@@ -2364,11 +2452,11 @@ export default function App() {
               onPress={() => setShowMeshVoice(!showMeshVoice)}
               style={s.settingPress}
             >
-              <Text style={s.rowIcon}>🎙</Text>
+              <View style={s.rowIconBox}><Icon name="microphone-outline" size={20} color={c.ink} /></View>
               <Text style={{ color: c.ink, flex: 1, fontSize: 15, fontWeight: "600" }}>
                 Public voice note
               </Text>
-              <NativeText style={{ color: c.muted }}>{showMeshVoice ? "▲" : "▼"}</NativeText>
+              <Icon name={showMeshVoice ? "chevron-up" : "chevron-down"} size={22} color={c.muted} />
             </Pressable>
             {showMeshVoice && (
               <MeshVoicePanel
@@ -2502,7 +2590,7 @@ export default function App() {
                 />
                 <View style={s.packLine}>
                   <Text style={[s.rolePill, { color: c.ink, borderColor: c.line }]}>
-                    {`🔒 ${i18n.translate(roleLabels[data.role] || "Citizen", activeUi)}`}
+                    <Icon name="lock" size={11} color={c.ink} />{` ${i18n.translate(roleLabels[data.role] || "Citizen", activeUi)}`}
                   </Text>
                   <Pressable
                     hitSlop={8}
@@ -2533,9 +2621,9 @@ export default function App() {
         {languageCard()}
         {card(
           <>
-            {label("🔔 SOUND & FEEDBACK")}
+            {label("SOUND & FEEDBACK", "bell-outline")}
             {option(
-              "▶",
+              "play-circle-outline",
               "Auto-play received messages",
               "",
               data.autoPlay,
@@ -2543,32 +2631,32 @@ export default function App() {
             )}
             {data.voiceMode === "translated" &&
               option(
-                "✓",
+                "text-box-check-outline",
                 "Review transcript before sending",
                 "",
                 data.reviewSpeech,
                 (v) => change({ reviewSpeech: v }),
               )}
-            {option("📳", "Vibration", "", data.haptics, (v) =>
+            {option("vibrate", "Vibration", "", data.haptics, (v) =>
               change({ haptics: v }),
             )}
-            {option("🔔", "Alert sounds", "", data.sounds, (v) =>
+            {option("bell-outline", "Alert sounds", "", data.sounds, (v) =>
               change({ sounds: v }),
             )}
           </>,
         )}
         {card(
           <>
-            {label("📍 LOCATION & PRIVACY")}
+            {label("LOCATION & PRIVACY", "shield-account-outline")}
             {option(
-              "📍",
+              "map-marker-radius-outline",
               "Share my location",
-              "Only with the paired phone while Talk2 is open",
+              "Paired phone and nearby mesh phones while Talk2 is open",
               data.shareLocation,
-              setLocationSharing,
+              toggleSharing,
             )}
             {option(
-              "📡",
+              "bell-ring-outline",
               "Nearby peer cue",
               "One cue when the paired phone is within 20 m",
               sirenEnabled,
@@ -2577,12 +2665,12 @@ export default function App() {
                 change({ sirenEnabled: v });
               },
             )}
-            {settingRow("🗑", "Clear history & voice files", "", clearHistory)}
+            {settingRow("delete-outline", "Clear history & voice files", "", clearHistory)}
           </>,
         )}
         {card(
           <>
-            {label("🎨 APPEARANCE")}
+            {label("APPEARANCE", "palette-outline")}
             <View style={s.segment}>
               {["system", "light", "dark"].map((x) => (
                 <Pressable
@@ -2618,28 +2706,26 @@ export default function App() {
               onPress={() => setShowAdvanced(!showAdvanced)}
               style={s.settingPress}
             >
-              <Text style={s.rowIcon}>⚙</Text>
+              <View style={s.rowIconBox}><Icon name="cog-outline" size={20} color={c.ink} /></View>
               <Text style={{ color: c.ink, flex: 1, fontSize: 15, fontWeight: "600" }}>
                 More options
               </Text>
-              <NativeText style={{ color: c.muted, fontSize: 16 }}>
-                {showAdvanced ? "▲" : "▼"}
-              </NativeText>
+              <Icon name={showAdvanced ? "chevron-up" : "chevron-down"} size={22} color={c.muted} />
             </Pressable>
             {showAdvanced && (
               <>
-                {settingRow("✦", "Ask GPT (online)", "", () => setRoute("gpt"))}
-                {settingRow("▥", "Performance & diagnostics", "", () =>
+                {settingRow("robot-outline", "Ask GPT (online)", "", () => setRoute("gpt"))}
+                {settingRow("chart-box-outline", "Performance & diagnostics", "", () =>
                   setRoute("analysis"),
                 )}
-                {settingRow("🔐", "Permissions", "", () => setRoute("permissions"))}
-                {settingRow("📳", "Test vibration", "", () =>
+                {settingRow("shield-key-outline", "Permissions", "", () => setRoute("permissions"))}
+                {settingRow("vibrate", "Test vibration", "", () =>
                   run(async () => {
                     const ok = await Native.feedback("message");
                     if (!ok) throw new Error("This device has no vibrator");
                   }),
                 )}
-                {settingRow("🔔", "Test alert sound", "", () => Native.alertTone())}
+                {settingRow("bell-ring-outline", "Test alert sound", "", () => Native.alertTone())}
                 {label("OPTIONAL NODE BACKEND")}
                 {field(
                   data.backend,
@@ -2721,6 +2807,11 @@ export default function App() {
       )}
       <ScrollView
         keyboardShouldPersistTaps="handled"
+        refreshControl={
+          data.setup && tab === "radar" && !route ? (
+            <RefreshControl refreshing={refreshing} onRefresh={refreshRadar} colors={["#1769AA"]} tintColor="#1769AA" />
+          ) : undefined
+        }
         contentContainerStyle={{ padding: 20, paddingBottom: 30 }}
       >
         {content}
@@ -2744,14 +2835,7 @@ export default function App() {
                 },
               ]}
             >
-              <Text
-                style={{
-                  fontSize: 22,
-                  color: key === "alert" ? "#BC6339" : c.ink,
-                }}
-              >
-                {["◉", "◎", "△", "◷", "⚙"][i]}
-              </Text>
+              <Icon name={["message-text-outline", "radar", "alert-outline", "history", "cog-outline"][i]} size={24} color={key === "alert" ? "#BC6339" : c.ink} />
               <Text
                 style={{
                   color: c.ink,
@@ -2782,7 +2866,7 @@ export default function App() {
                   hitSlop={12}
                   onPress={() => setShowConnect(false)}
                 >
-                  <NativeText style={{ color: c.muted, fontSize: 24 }}>✕</NativeText>
+                  <Icon name="close" size={26} color={c.muted} />
                 </Pressable>
               </View>
               <View
@@ -2809,19 +2893,11 @@ export default function App() {
                   {busyLink ? (
                     <ActivityIndicator color="#FFF" />
                   ) : (
-                  <NativeText style={{ fontSize: 18 }}>
-                    {connected || connectionState === "connected"
-                      ? "✅"
-                      : connectionState === "failed"
-                        ? "⚠️"
-                        : connectionState === "scanning"
-                          ? "🔍"
-                          : connectionState === "hosting"
-                            ? "📡"
-                            : connectionState === "joining" || connectionState === "pairing"
-                              ? "🔗"
-                              : "📱"}
-                  </NativeText>
+                  <Icon
+                    name={connected || connectionState === "connected" ? "check" : connectionState === "failed" ? "alert" : connectionState === "hosting" ? "access-point" : connectionState === "joining" || connectionState === "pairing" ? "link-variant" : "cellphone"}
+                    size={20}
+                    color="#FFF"
+                  />
                   )}
                 </View>
                 <View style={{ flex: 1 }}>
@@ -2851,7 +2927,7 @@ export default function App() {
               </View>
               {connected ? (
                 <View style={[s.steps, { backgroundColor: c.card, borderColor: c.line, alignItems: "center", paddingVertical: 20 }]}>
-                  <NativeText style={{ fontSize: 34 }}>🤝</NativeText>
+                  <Icon name="handshake-outline" size={36} color="#2BAA72" />
                   <NativeText style={{ color: c.ink, fontSize: 20, fontWeight: "800" }}>{peerName}</NativeText>
                   <Text style={{ color: c.muted }}>
                     {linkTransport === "wifi" ? "Talk2 · Wi-Fi Direct" : "Talk2 · Bluetooth"}
@@ -2867,7 +2943,7 @@ export default function App() {
               <>
               {connectionState === "failed" && (
                 <Pressable accessibilityRole="button" onPress={findPhones} style={[s.hint, { borderColor: "#D35D5D", marginBottom: 8 }]}>
-                  <Text style={{ color: c.ink, fontWeight: "700" }}>↻ Try again</Text>
+                  <View style={[s.packLine, { marginTop: 0 }]}><Icon name="refresh" size={18} color={c.ink} /><Text style={{ color: c.ink, fontWeight: "700" }}>Try again</Text></View>
                 </Pressable>
               )}
               <View style={[s.steps, { backgroundColor: c.card, borderColor: c.line }]}>
@@ -2889,7 +2965,7 @@ export default function App() {
                 onPress={findPhones}
                 style={[s.bigAction, { opacity: connectionState === "scanning" ? 0.6 : 1 }]}
               >
-                <NativeText style={{ fontSize: 22 }}>🔍</NativeText>
+                <Icon name="magnify" size={24} color="#FFF" />
                 <Text style={{ color: "#FFF", fontWeight: "800", fontSize: 16 }}>
                   {connectionState === "scanning" ? "Scanning…" : "Find phones"}
                 </Text>
@@ -2909,7 +2985,7 @@ export default function App() {
                 }
                 style={[s.hostButton, { borderColor: c.line }]}
               >
-                <NativeText style={{ fontSize: 18 }}>📡</NativeText>
+                <Icon name="access-point" size={20} color={c.ink} />
                 <Text style={{ color: c.ink, fontWeight: "700", fontSize: 13, textAlign: "center" }}>
                   {hostingTransport ? "Visible · waiting for a phone…" : "Make this phone visible"}
                 </Text>
@@ -2929,9 +3005,7 @@ export default function App() {
                       style={[s.peerRow, { backgroundColor: c.card, borderColor: c.line }]}
                     >
                       <View style={[s.peerIcon, { backgroundColor: p.transport === "wifi" ? "#E8F3EC" : "#E3F0FB" }]}>
-                        <NativeText style={{ fontSize: 18, color: "#1769AA", fontWeight: "800" }}>
-                          {p.transport === "wifi" ? "📶" : "ᛒ"}
-                        </NativeText>
+                        <Icon name={p.transport === "wifi" ? "wifi" : "bluetooth"} size={20} color="#1769AA" />
                       </View>
                       <View style={{ flex: 1 }}>
                         <NativeText style={{ color: c.ink, fontWeight: "700", fontSize: 15 }} numberOfLines={1}>
@@ -2991,9 +3065,10 @@ export default function App() {
               {pairCode}
             </NativeText>
             {pairConfirmed ? (
-              <Text style={{ color: "#2BAA72", textAlign: "center", fontWeight: "700", marginBottom: 10 }}>
-                ✓ Confirmed here. Waiting for the other phone to tap Codes match…
-              </Text>
+              <View style={[s.packLine, { justifyContent: "center", marginBottom: 10 }]}>
+                <Icon name="check-circle" size={18} color="#2BAA72" />
+                <Text style={{ color: "#2BAA72", fontWeight: "700", flexShrink: 1 }}>Confirmed here. Waiting for the other phone to tap Codes match…</Text>
+              </View>
             ) : (
               button("Codes match", () =>
                 run(async () => {
@@ -3015,7 +3090,7 @@ export default function App() {
       >
         <View style={s.overlay}>
           <View style={[s.sheet, { backgroundColor: c.bg }]}>
-            <NativeText style={{ fontSize: 40, textAlign: "center" }}>🎙</NativeText>
+            <View style={{ alignItems: "center" }}><Icon name="microphone-message" size={44} color="#1769AA" /></View>
             {title("Speech pack needed")}
             <NativeText style={{ color: c.ink, fontSize: 18, fontWeight: "700" }}>
               {langOf(packPrompt)?.native} · {langOf(packPrompt)?.name}
@@ -3027,7 +3102,7 @@ export default function App() {
             <Text style={[s.small, { color: c.muted, marginTop: 14 }]}>
               Or skip the download and send your recorded voice:
             </Text>
-            {button("🎤 Use Original voice", () => {
+            {button("Use Original voice", () => {
               change({ voiceMode: "original" });
               setPackPrompt("");
             })}
@@ -3176,6 +3251,15 @@ const s = StyleSheet.create({
     paddingVertical: 6,
   },
   netDot: { width: 10, height: 10, borderRadius: 5 },
+  statusBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    borderWidth: 1,
+    borderRadius: 14,
+    padding: 12,
+    marginBottom: 14,
+  },
   permRow: { flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 8 },
   small: { fontSize: 12, lineHeight: 17, marginTop: 4 },
   packLine: { flexDirection: "row", alignItems: "center", gap: 12, marginTop: 4 },
@@ -3196,6 +3280,8 @@ const s = StyleSheet.create({
     paddingVertical: 10,
   },
   rowIcon: { fontSize: 18, width: 28, textAlign: "center" },
+  rowIconBox: { width: 28, alignItems: "center" },
+  labelRow: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 14, marginBottom: 10 },
   rowExtra: { paddingLeft: 38, paddingBottom: 8 },
   segment: { flexDirection: "row", gap: 6, marginVertical: 6 },
   segmentItem: {
