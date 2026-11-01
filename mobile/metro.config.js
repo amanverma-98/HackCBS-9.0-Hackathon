@@ -9,4 +9,5 @@ module.exports=mergeConfig(getDefaultConfig(__dirname),{
     // Excluding generated Android output prevents ENOENT watcher races on clean builds.
     blockList:/[\\/]mobile[\\/]android[\\/](?:app[\\/])?build[\\/].*/,
   },
+  
 });
